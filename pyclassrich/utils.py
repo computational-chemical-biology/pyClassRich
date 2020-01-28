@@ -17,6 +17,7 @@ from collections import defaultdict
 import time
 
 #from scripts.classwf.classyfire import *
+from pyclassrich.gnps import Proteosafe
 
 
 def run_mzmine(mzmine_path, param_file,
@@ -57,20 +58,22 @@ def run_mzmine(mzmine_path, param_file,
     steps = [xml['batch']['batchstep'][i]['@method'] for i in
              range(len(xml['batch']['batchstep']))]
 
-    step0 = 'net.sf.mzmine.modules.rawdatamethods.rawdataimport.RawDataImportModule'
-    sfstep = 'net.sf.mzmine.modules.peaklistmethods.io.csvexport.CSVExportModule'
-    fstep = 'net.sf.mzmine.modules.peaklistmethods.io.gnpsexport.GNPSExportAndSubmitModule'
+    step0 = 'rawdataimport.RawDataImportModule'
+    sfstep = 'csvexport.CSVExportModule'
+    fstep_old = 'gnpsexport.GNPSExportAndSubmitModule'
+    # For mzmine 2.53 
+    fstep = 'gnpsexport.fbmn.GnpsFbmnExportAndSubmitModule'
 
-    if step0 not in steps:
+    if not any(step0 in x for x in steps):
         xml['batch']['batchstep'].insert(0, auxxml['batch']['batchstep'][0])
 
-    if sfstep not in steps:
+    if not any(sfstep in x for x in steps):
         xml['batch']['batchstep'].append(auxxml['batch']['batchstep'][8])
 
-    if fstep not in steps:
+    if not any(fstep in x or fstep_old in x for x in steps):
         xml['batch']['batchstep'].append(auxxml['batch']['batchstep'][9])
 
-    for i in range(len(xml['batch']['batchstep'])):
+    for i in range(len(steps)):
         if 'RawDataImportModule' in xml['batch']['batchstep'][i]['@method']:
             xml['batch']['batchstep'][i]['parameter']['file'] = fls
         if type(xml['batch']['batchstep'][i]['parameter'])==list:
@@ -78,12 +81,13 @@ def run_mzmine(mzmine_path, param_file,
                 if 'Raw data files' in xml['batch']['batchstep'][i]['parameter'][j]['@name']:
                     xml['batch']['batchstep'][i]['parameter'][0]['@type'] = 'BATCH_LAST_FILES'
                 if 'Mass list' in xml['batch']['batchstep'][i]['parameter'][j]['@name']:
-                    #print(xml['batch']['batchstep'][i]['parameter'][j]['#text'])
                     xml['batch']['batchstep'][i]['parameter'][j]['#text'] = 'masses'
         if 'CSVExportModule' in xml['batch']['batchstep'][i]['@method']:
-            xml['batch']['batchstep'][i]['parameter'][1]['#text'] = os.path.join(opth, 'feature_table.csv')
-        if 'GNPSExport' in xml['batch']['batchstep'][i]['@method']:
-            xml['batch']['batchstep'][i]['parameter'][1]['#text'] = os.path.join(opth, 'spectra.mgf')
+            xml['batch']['batchstep'][i]['parameter'][1]['current_file'] = os.path.join(opth, 'feature_table.csv')
+            xml['batch']['batchstep'][i]['parameter'][1]['last_file'] = os.path.join(opth, 'feature_table.csv')
+        if 'gnpsexport' in xml['batch']['batchstep'][i]['@method']:
+            xml['batch']['batchstep'][i]['parameter'][1]['current_file'] = os.path.join(opth, 'spectra.mgf')
+            xml['batch']['batchstep'][i]['parameter'][1]['last_file'] = os.path.join(opth, 'spectra.mgf')
         if 'SiriusExport' in xml['batch']['batchstep'][i]['@method']:
             xml['batch']['batchstep'][i]['parameter'][1]['#text'] = os.path.join(opth, 'ms1_ms2.mgf')
 
@@ -91,9 +95,7 @@ def run_mzmine(mzmine_path, param_file,
     with open(oxml, 'w+') as result_file:
         result_file.write(xmltodict.unparse(xml, pretty=True))
 
-    mzmine = mzmine_path
-    subprocess.call(['sh', mzmine, oxml])
-    #os.remove(oxml)
+    subprocess.call([mzmine_path, oxml])
 
 #Base url is just something like massive.ucsd.edu
 #parameters is a map
@@ -117,14 +119,19 @@ def invoke_workflow(base_url, parameters, login, password):
         return None
 
 
-def submit_proteosafe(taskid, invokeParametersFB, invokeParametersNAP,
-                      gnps_taskid=None, username='rsilva',
-                      folderName='project_paula', email='rsilvabioinfo@gmail.com'):
+def submit_proteosafe(taskid, input_dir, output_dir, invokeParametersFB,
+                      invokeParametersNAP, username, password,
+                      folderName, email, gnps_taskid=None):
     """ Submits a ProteoSAFe job.
     Parameters
     ----------
     taskid : str
-       Carcara task id
+       Carcara task id, or other arbitrary string
+    input_dir : str
+       Input directory containing spectra, metadata
+       and feature table
+    output_dir : str
+       Output directory
     invokeParametersFB : str
        GNPS FBMN param dict
     invokeParametersNAP : str
@@ -133,6 +140,8 @@ def submit_proteosafe(taskid, invokeParametersFB, invokeParametersNAP,
        parameter file enforcing some fields
     username : str
        GNPS user name
+    password : str
+       GNPS user password
     folderName : str
        Massive project name
     Returns
@@ -143,9 +152,8 @@ def submit_proteosafe(taskid, invokeParametersFB, invokeParametersNAP,
        list of dictionary parameters
     """
 
-    doutput = os.path.join(OUTDIR, taskid)
+    doutput = input_dir
     username = username
-    password = bz2.decompress(PPSSWD).decode("utf-8")
     server = 'massive.ucsd.edu'
     #taskid = args[0]
 
@@ -207,23 +215,29 @@ def submit_proteosafe(taskid, invokeParametersFB, invokeParametersNAP,
 
     paramlist['nap_taskid'] = njobid
 
+    doutput = output_dir
     with open(os.path.join(doutput, 'params.json'), 'w') as f:
         json.dump(paramlist, f, indent=4, sort_keys=True)
 
     return paramlist
 
-def getdb(dbName):
+def getdb(dbName, struct_db):
     switcher = {
         'HMDB' : "%s/hmdb_21_02_2018_formatted.txt",
         'GNPS' : "%s/gnpsCLASS.txt",
         'DNP' : "%s/dnpCLASS.txt",
+        'DNP_PUBLIC' : "%s/dnp_public.tsv",
         'CHEBI' : "%s/chebiCLASS.txt",
         'SUPNAT' : "%s/supernaturalCLASS.txt",
         'DRUGBANK' : "%s/drugdb_formatted.txt",
         'MarinLit' : "%s/MarinLit_04_03_2018.txt",
-        'FooDB' : "%s/fooddb_04_03_2018.txt"
+        'FooDB' : "%s/fooddb_04_03_2018.txt",
+        'NPAtlas' : "%s/np_atlas_2019_02.tsv"
     }
-    return switcher[dbName] % STRUCT_DB
+    if dbName in switcher.keys():
+        return switcher[dbName] % struct_db
+    else:
+        return None
 
 def inchi2pth(k, db='kegg'):
     if db=='kegg':
@@ -320,47 +334,40 @@ def get_class(queries, chunksize = 10, sleep=10):
         time.sleep(sleep)
     return in_process
 
-def classify(taskid, nap_taskid, script_path=''):
+def classify(output_dir, nap_taskid, struct_db, script_path=''):
     """ Classifies structural annotations from GNPS/NAP
         in decreasing order of confidence
     Parameters
     ----------
-    taskid : str
-       Carcara task id
+    output_dir : str
+       Output directory
     nap_taskid : str
        NAP task id
+    struct_db : str
+       Structural DB directory
     script_path : str
        path to rda2json conversion script, assumes
        Rscript is on the path.
     Returns
     -------
     .tsv : file
-       fully annotated GNPS/NAP table saved to OUTDIR
+       fully annotated GNPS/NAP table saved to output_dir
     status : str
        status code DONE
     """
 
-    taskid = taskid
     nptaskid = nap_taskid
-    doutput = os.path.join(OUTDIR, taskid)
+    doutput = output_dir
     # call napviewer or local?
     if script_path=='':
-        url = 'http://dorresteinappshub.ucsd.edu:5001/NAPviewer/?task=%s' % nptaskid
-        rnap = requests.get(url)
-        if rnap.status_code==200:
-            base_url = 'http://dorresteinappshub.ucsd.edu:5001/NAPviewer/static/downloads/{0}/{1}'
-            url_to_tab = base_url.format(*[nptaskid, 'tabgnps.tsv'])
-            url_to_net = base_url.format(*[nptaskid, 'net.tsv'])
-            url_to_mlist = base_url.format(*[nptaskid, 'mlist.json'])
-            url_to_fusion = base_url.format(*[nptaskid, 'fusion.json'])
-            url_to_lid = base_url.format(*[nptaskid, 'lid.json'])
-            url_to_consensus = base_url.format(*[nptaskid, 'consensus.json'])
-            tabgnps = pd.read_csv(io.StringIO(requests.get(url_to_tab).text), sep='\t')
-            net = pd.read_csv(io.StringIO(requests.get(url_to_net).text), sep='\t')
-            mlist = json.load(io.StringIO(requests.get(url_to_mlist).text))
-            fusion = json.load(io.StringIO(requests.get(url_to_fusion).text))
-            lid = json.load(io.StringIO(requests.get(url_to_lid).text))
-            consensus = json.load(io.StringIO(requests.get(url_to_consensus).text))
+        ndict = Proteosafe(nptaskid, 'NAP')
+        ndict.get_nap()
+        tabgnps = ndict.tabgnps
+        net = ndict.net
+        mlist = ndict.mlist
+        lid = ndict.lid
+        fusion = ndict.fusion
+        consensus = ndict.consensus
     else:
         subprocess.call(['Rscript', '%s/rda2json2.R' % script_path, nptaskid, doutput])
         tabgnps = pd.read_csv(os.path.join(doutput, 'tabgnps.tsv'), sep='\t')
@@ -400,16 +407,16 @@ def classify(taskid, nap_taskid, script_path=''):
                 tmp.sort_values(['fusion'], ascending=False, inplace=True)
                 g = tmp[tmp['fusion']==1]['MCSS'].tolist()[0]
                 sel = tmp[tmp['MCSS']==g][['Identifier', 'fusion']]
-                sel['cluster.index'] = tabgnps.loc[i, 'cluster.index']
-                sel['Ncandidates'] = tmp.shape[0]
+                sel.loc[:,'cluster.index'] = tabgnps.loc[i, 'cluster.index']
+                sel.loc[:,'Ncandidates'] = tmp.shape[0]
                 sel.rename(columns={'fusion':'Score'}, inplace=True)
             elif 'fusion2' in tmp.columns:
                 tmp['fusion2'] = tmp['fusion2'].astype(float)
                 tmp.sort_values(['fusion2'], ascending=False, inplace=True)
                 g = tmp[tmp['fusion2']==1]['MCSS'].tolist()[0]
                 sel = tmp[tmp['MCSS']==g][['Identifier', 'fusion2']]
-                sel['cluster.index'] = tabgnps.loc[i, 'cluster.index']
-                sel['Ncandidates'] = tmp.shape[0]
+                sel.loc[:,'cluster.index'] = tabgnps.loc[i, 'cluster.index']
+                sel.loc[:,'Ncandidates'] = tmp.shape[0]
                 sel.rename(columns={'fusion2':'Score'}, inplace=True)
             elif 'Score' in tmp.columns:
                 if not (tmp['Score']==1).any():
@@ -418,21 +425,19 @@ def classify(taskid, nap_taskid, script_path=''):
                 tmp.sort_values(['Score'], ascending=False, inplace=True)
                 g = tmp[tmp['Score']==1]['MCSS'].tolist()[0]
                 sel = tmp[tmp['MCSS']==g][['Identifier', 'Score']]
-                sel['cluster.index'] = tabgnps.loc[i, 'cluster.index']
-                sel['Ncandidates'] = tmp.shape[0]
+                sel.loc[:,'cluster.index'] = tabgnps.loc[i, 'cluster.index']
+                sel.loc[:,'Ncandidates'] = tmp.shape[0]
         else:
             sel = ltmp[['Identifier', 'Score']]
-            sel['cluster.index'] = tabgnps.loc[i, 'cluster.index']
-            sel['Ncandidates'] = ltmp.shape[0]
+            sel.loc[:,'cluster.index'] = tabgnps.loc[i, 'cluster.index']
+            sel.loc[:,'Ncandidates'] = ltmp.shape[0]
         sellist.append(sel)
 
-    # need parameter file
-    target_url = "http://proteomics2.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=params/" % nptaskid
-    r = requests.get(target_url)
-    plist = xmltodict.parse(r.text)['parameters']['parameter']
-    ndb = [x['#text'] for x in plist if x['@name']=='DATABASE'][0]
     # check if there is in house database
-    dblist = [pd.read_csv(getdb(x), sep='\t') for x in ndb.split(',')]
+    ndb =  ndict.ndb
+    ndb = ndb.replace(' ', '')
+    dblist = [getdb(x, struct_db) for x in ndb.split(',')]
+    dblist = [pd.read_csv(x, sep='\t') for x in dblist if x is not None]
     db = pd.concat(dblist, ignore_index=True)
 
     seltab = pd.concat(sellist)
@@ -531,7 +536,7 @@ def classify(taskid, nap_taskid, script_path=''):
     #seltab[['cluster.index', 'Ncandidates']][np.invert(seltab[['cluster.index', 'Ncandidates']].duplicated())]['Ncandidates'].sum()
 
     ftabgnps.to_csv(os.path.join(doutput, 'fully_annotated_gnps.tsv'), index=None, sep='\t')
-    return 'DONE'
+    return ftabgnps
 
 def getLibraIDlink(i, tab):
     burl = 'https://gnps.ucsd.edu/ProteoSAFe/result.jsp?task='
