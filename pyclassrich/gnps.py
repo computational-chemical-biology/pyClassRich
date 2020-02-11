@@ -42,26 +42,29 @@ class Proteosafe:
             url_to_attributes = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=clusterinfo_summary/" % (taskid[0])
             url_to_edges = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=networking_pairs_results_file_filtered/" % (taskid[0])
             url_to_features = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=quantification_table/" % (taskid[0])
-            self.gnps = pd.read_table(io.StringIO(requests.get(url_to_attributes).text))
-            self.net = pd.read_table(io.StringIO(requests.get(url_to_edges).text))
+            url_to_metadata = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=metadata_table/" % (taskid[0])
+            self.gnps = pd.read_csv(io.StringIO(requests.get(url_to_attributes).text), sep='\t')
+            self.net = pd.read_csv(io.StringIO(requests.get(url_to_edges).text), sep='\t')
+            self.feat = pd.read_csv(io.StringIO(requests.get(url_to_features).text))
+            self.meta = pd.read_csv(io.StringIO(requests.get(url_to_metadata).text), sep='\t')
             if len(taskid) > 1:
                 url_to_attributes = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=clusterinfo_summary/" % (taskid[1])
                 url_to_edges = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=networking_pairs_results_file_filtered/" % (taskid[1])
-                self.gnps1 = pd.read_table(io.StringIO(requests.get(url_to_attributes).text))
-                self.net1 = pd.read_table(io.StringIO(requests.get(url_to_edges).text))
+                self.gnps1 = pd.read_csv(io.StringIO(requests.get(url_to_attributes).text, sep='\t'))
+                self.net1 = pd.read_csv(io.StringIO(requests.get(url_to_edges).text), sep='\t')
             else:
                 self.gnps1 = None
                 self.net1 = None
         elif workflow=='V2':
             url_to_attributes = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=clusterinfosummarygroup_attributes_withIDs_withcomponentID/" % (taskid[0])
             url_to_edges = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=networkedges_selfloop/" % (taskid[0])
-            self.gnps = pd.read_table(io.StringIO(requests.get(url_to_attributes).text))
-            self.net = pd.read_table(io.StringIO(requests.get(url_to_edges).text))
+            self.gnps = pd.read_csv(io.StringIO(requests.get(url_to_attributes).text), sep='\t')
+            self.net = pd.read_csv(io.StringIO(requests.get(url_to_edges).text), sep='\t')
             if len(taskid) > 1:
                 url_to_attributes = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=clusterinfosummarygroup_attributes_withIDs_withcomponentID/" % (taskid[1])
                 url_to_edges = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=networkedges_selfloop/" % (taskid[1])
-                self.gnps1 = pd.read_table(io.StringIO(requests.get(url_to_attributes).text))
-                self.net1 = pd.read_table(io.StringIO(requests.get(url_to_edges).text))
+                self.gnps1 = pd.read_csv(io.StringIO(requests.get(url_to_attributes).text), sep='\t')
+                self.net1 = pd.read_csv(io.StringIO(requests.get(url_to_edges).text), sep='\t')
             else:
                 self.gnps1 = None
                 self.net1 = None
@@ -74,6 +77,8 @@ class Proteosafe:
            NAP task id
         Returns
         -------
+        gtaskid : str
+            GNPS taskid.
         tabgnps : pandas.DataFrame
             node attributes table.
         net : pandas.DataFrame
@@ -114,5 +119,25 @@ class Proteosafe:
         r = requests.get(target_url)
         plist = xmltodict.parse(r.text)['parameters']['parameter']
         self.ndb = [x['#text'] for x in plist if x['@name']=='DATABASE'][0]
+        self.gtaskid = [x['#text'] for x in plist if x['@name']=='JOBID'][0]
+
+    def get_gnps_taskid(self):
+        """ Sends a request to ProteoSAFe.
+        Parameters
+        ----------
+        taskid : str
+           NAP task id
+        Returns
+        -------
+        gtaskid : str
+            GNPS taskid.
+        """
+        taskid = self.taskid
+
+        # need parameter file
+        target_url = "http://proteomics2.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=params/" % taskid
+        r = requests.get(target_url)
+        plist = xmltodict.parse(r.text)['parameters']['parameter']
+        self.gtaskid = [x['#text'] for x in plist if x['@name']=='JOBID'][0]
 
 

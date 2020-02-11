@@ -24,6 +24,9 @@ import io
 import re
 import skbio
 
+from pyclassrich.gnps import Proteosafe
+from pyclassrich.plots import plot_volcano
+
 def multi_class(data, cn, features, method):
     if len(data.groupby(cn)) <= 2:
         raise Exception('ANOVA requires a secondary index with three or more values')
@@ -39,14 +42,30 @@ def multi_class(data, cn, features, method):
         vstats.append(func(*cls))
     return pd.DataFrame(vstats)
 
-def univariate(taskid, nap_taskid):
+def univariate(annotation, tabgnps, params,
+               feat, meta, nap_taskid='', volcano=True,
+               input_dir='', filename=''):
     """ Performs the selected univariate test in all features.
     Parameters
     ----------
-    taskid : str
-       Carcara task id
+    annotation : str or pd.DataFrame
+       Class annotation or file path
+    tabgnps : str or pd.DataFrame
+       Nodes from GNPS' connected components
+    params : str or dict
+       Params dict or file path
+    feat : str or pd.DataFrame
+       Feature quantification or file path
+    meta : str or pd.DataFrame
+       Feature metadata
     nap_taskid : str
        NAP task id
+    volcano : bool
+       Whether to plot
+    input_dir : str
+       Input dir
+    filename : str
+      Output filename
     Returns
     -------
     .tsv : file
@@ -54,8 +73,11 @@ def univariate(taskid, nap_taskid):
     .pdf : file
        Volcano plot
     """
-    doutput = os.path.join(OUTDIR, taskid)
-    ftabgnps = pd.read_csv(os.path.join(doutput, 'fully_annotated_gnps.tsv'), sep='\t')
+    if type(annotation)==str:
+        doutput = os.path.join(input_dir, annotation)
+        ftabgnps = pd.read_csv(doutput, sep='\t')
+    else:
+        ftabgnps = annotation
     ctab = ftabgnps.groupby('cluster.index').apply(lambda a: a.reset_index(drop=True).loc[0,:])
     ctab.reset_index(drop=True, inplace=True)
     ctab.sort_values(['cluster.index'], inplace=True)
@@ -64,36 +86,43 @@ def univariate(taskid, nap_taskid):
                     'class_name','class_id', 'subclass_name',
                     'subclass_id', 'Smiles', 'InChI']]
 
-    url_to_param = 'http://proteomics2.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=params/' % nap_taskid
-    r = requests.get(url_to_param)
-    plist = xmltodict.parse(r.text)['parameters']['parameter']
-    gtaskid = [x['#text'] for x in plist if x['@name']=='JOBID'][0]
+    if type(feat)==str:
+        doutput = os.path.join(input_dir, feat)
+        feat = pd.read_csv(doutput)
+    elif nap_taskid!='':
+        ndict = Proteosafe(nap_taskid, 'NAP')
+        ndict.get_gnps_taskid()
+        gtaskid = ndict.gtaskid
+        quant = Proteosafe(gtaskid, 'MZmine')
+        quant.get_gnps()
+        feat = quant.feat
 
-    url_to_metadata = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=metadata_table/" % gtaskid
-    url_to_features = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=quantification_table/" % gtaskid
+    if type(meta)==str:
+        doutput = os.path.join(input_dir, meta)
+        meta = pd.read_csv(doutput, sep='\t')
+    elif nap_taskid!='':
+        ndict = Proteosafe(nap_taskid, 'NAP')
+        ndict.get_gnps_taskid()
+        gtaskid = ndict.gtaskid
+        quant = Proteosafe(gtaskid, 'MZmine')
+        quant.get_gnps()
+        meta = quant.meta
 
-    feat = pd.read_csv(io.StringIO(requests.get(url_to_features).text))
-    # enforce first column name 'filename'
-    meta = pd.read_csv(io.StringIO(requests.get(url_to_metadata).text), sep='\t')
-
-    if not os.path.isfile(os.path.join(doutput, 'params.json')):
-        with open(os.path.join(doutput, 'params.json'), 'w') as f:
-            json.dump({'gnps_taskid':gtaskid,
-                       'nap_taskid':nap_taskid},
-                       f, indent=4)
-
-    url = 'http://dorresteinappshub.ucsd.edu:5001/NAPviewer/?task=%s' % nap_taskid
-    rnap = requests.get(url)
-    if rnap.status_code==200:
-        base_url = 'http://dorresteinappshub.ucsd.edu:5001/NAPviewer/static/downloads/{0}/{1}'
-        url_to_tab = base_url.format(*[nptaskid, 'tabgnps.tsv'])
-        tabgnps = pd.read_csv(io.StringIO(requests.get(url_to_tab).text), sep='\t')
+    if type(tabgnps)==str:
+        doutput = os.path.join(input_dir, tabgnps)
+        tabgnps = pd.read_csv(doutput, sep='\t')
+    elif nap_taskid!='':
+        ndict = Proteosafe(nap_taskid, 'NAP')
+        ndict.get_nap()
+        tabgnps = ndict.tabgnps
 
     ctabsel = pd.merge(tabgnps[['cluster.index','parent.mass', 'RTMean', 'LibraryID']],
                        ctabsel, left_on='cluster.index', right_on='cluster.index')
 
-    with open(os.path.join(doutput, 'params.yml'), 'r') as stream:
-        params = yaml.safe_load(stream)
+    if type(params)==str:
+        doutput = os.path.join(input_dir, params)
+        with open(doutput, 'r') as stream:
+            params = yaml.safe_load(stream)
 
     sampleid = pd.DataFrame(feat.columns[3:].tolist(),
                             columns=['sampleid'])
@@ -106,6 +135,7 @@ def univariate(taskid, nap_taskid):
     feat2 = feat2[feat2['sampleid'].str.contains('Peak area')]
     feat2['sampleid'] = feat2['sampleid'].str.replace('(.+)\\.mzX?ML .+', '\\1')
     mnfeat = feat2[feat2.columns[1:]][feat2[feat2.columns[1:]]!=0].min().min()
+    # Make it optional?
     feat2.replace(0, mnfeat*(2/3), inplace=True)
     if params['normalization']['perform'] and \
        params['normalization']['type']=='TIC':
@@ -114,6 +144,8 @@ def univariate(taskid, nap_taskid):
     meta['filename'] = meta['filename'].str.replace("\\.mzXML|\\.mzML", "")
     # should transformations be applied?
     #feat2[feat2.columns[1:]] = feat2[feat2.columns[1:]].transform(np.log10)
+    meta['filename'] = meta['filename'].str.replace('\s+$', '')
+    feat2['sampleid'] = feat2['sampleid'].str.replace('\s+$', '')
     feat2 = pd.merge(meta, feat2, left_on='filename',
                      right_on='sampleid')
 
@@ -182,23 +214,24 @@ def univariate(taskid, nap_taskid):
         idx1 = feat2.index[np.where(feat2[cn]==cs[1])]
         fchange = feat2[fnames].apply(lambda a:
                                       np.mean(a[idx0])/np.mean(a[idx1]))
-        vdf = pd.DataFrame([np.log2(fchange.tolist()),
-                            -np.log10(pvals.tolist()),
-                            -np.log10(pcor.tolist())]).T
-        vdf.columns = ['fold_change', 'p-value', 'fdr']
-        vthr = params['comparison']['vthr']
-        pthr = -np.log10(0.05)
-        vdf['Class'] = ''
-        vdf['Class'] = vdf.apply(lambda a:
-                                cs[0] if a['fold_change']>vthr and a['p-value']>pthr
-                                else (cs[1]
-                                if a['fold_change'] < -vthr and a['p-value']>pthr
-                                else 'Below Threshold') , axis=1)
-        palette = {cs[0]: 'red',
-                   cs[1]: 'blue',
-                   'Below Threshold': 'grey'}
-        plot_volcano(vdf, mode='pdf',
-                     filename=os.path.join(doutput, 'ggplot_volcano.pdf'))
+        if volcano:
+            vdf = pd.DataFrame([np.log2(fchange.tolist()),
+                                -np.log10(pvals.tolist()),
+                                -np.log10(pcor.tolist())]).T
+            vdf.columns = ['fold_change', 'p-value', 'fdr']
+            vthr = params['comparison']['vthr']
+            pthr = -np.log10(0.05)
+            vdf['Class'] = ''
+            vdf['Class'] = vdf.apply(lambda a:
+                                    cs[0] if a['fold_change']>vthr and a['p-value']>pthr
+                                    else (cs[1]
+                                    if a['fold_change'] < -vthr and a['p-value']>pthr
+                                    else 'Below Threshold') , axis=1)
+            palette = {cs[0]: 'red',
+                       cs[1]: 'blue',
+                       'Below Threshold': 'grey'}
+            plot_volcano(vdf, mode='pdf',
+                         filename=os.path.join(input_dir, 'ggplot_volcano.pdf'))
         ctabsel['fchange'] = fchange
         ctabsel['pval'] =  pvals
         ctabsel['cpval'] = pcor
@@ -213,31 +246,35 @@ def univariate(taskid, nap_taskid):
         fchange.columns = [c+'_foldchange' for c in cs]
 
         mxfchange = fchange.apply(lambda a: a[np.where(abs(np.log2(a))==np.amax(abs(np.log2(a))))[0][0]], axis=1)
-        vdf = pd.DataFrame([np.log2(mxfchange.tolist()),
-                            -np.log10(pvals.tolist()),
-                            -np.log10(pcor.tolist())]).T
-        vdf.columns = ['fold_change', 'p-value', 'fdr']
-        vthr = params['comparison']['vthr']
-        pthr = -np.log10(0.05)
-        vdf['Class'] = ''
-        vdf['Class'] = vdf.apply(lambda a:
-                                'Above Average' if a['fold_change']>vthr and a['p-value']>pthr
-                                else ('Below Average'
-                                if a['fold_change'] < -vthr and a['p-value']>pthr
-                                else 'Below Threshold') , axis=1)
-        palette = {'Above Average': 'red',
-                   'Below Average': 'blue',
-                   'Below Threshold': 'grey'}
-        plot_volcano(vdf, palette, mode='pdf',
-                     filename=os.path.join(doutput, 'ggplot_volcano.pdf'))
+
+        if volcano:
+            vdf = pd.DataFrame([np.log2(mxfchange.tolist()),
+                                -np.log10(pvals.tolist()),
+                                -np.log10(pcor.tolist())]).T
+            vdf.columns = ['fold_change', 'p-value', 'fdr']
+            vthr = params['comparison']['vthr']
+            pthr = -np.log10(0.05)
+            vdf['Class'] = ''
+            vdf['Class'] = vdf.apply(lambda a:
+                                    'Above Average' if a['fold_change']>vthr and a['p-value']>pthr
+                                    else ('Below Average'
+                                    if a['fold_change'] < -vthr and a['p-value']>pthr
+                                    else 'Below Threshold') , axis=1)
+            palette = {'Above Average': 'red',
+                       'Below Average': 'blue',
+                       'Below Threshold': 'grey'}
+            plot_volcano(vdf, palette, mode='pdf',
+                         filename=os.path.join(input_dir, 'ggplot_volcano.pdf'))
         ctabsel['fchange'] = mxfchange
         ctabsel['pval'] =  pvals
         ctabsel['cpval'] = pcor
         # Check here
         ctabsel = pd.concat([ctabsel, fchange], axis=1)
 
-    ctabsel.to_csv(os.path.join(doutput,'annotated_gnps_nap.tsv'),
-                   sep='\t', index=None)
+    if filename!='':
+        doutput = os.path.join(input_dir, filename)
+        ctabsel.to_csv(os.path.join(doutput),
+                       sep='\t', index=None)
     return ctabsel
 
 nonphyl_metrics = {'braycurtis', 'canberra', 'chebyshev', 'cityblock', 'correlation', 'cosine',

@@ -334,7 +334,8 @@ def get_class(queries, chunksize = 10, sleep=10):
         time.sleep(sleep)
     return in_process
 
-def classify(output_dir, nap_taskid, struct_db, script_path=''):
+def classify(output_dir, nap_taskid, struct_db, chemont,
+             outfile='', script_path=''):
     """ Classifies structural annotations from GNPS/NAP
         in decreasing order of confidence
     Parameters
@@ -345,6 +346,10 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
        NAP task id
     struct_db : str
        Structural DB directory
+    chemont : str
+       Ontology file from ClassyFire
+    outfile : str
+       Output file name
     script_path : str
        path to rda2json conversion script, assumes
        Rscript is on the path.
@@ -368,6 +373,8 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
         lid = ndict.lid
         fusion = ndict.fusion
         consensus = ndict.consensus
+        ndb =  ndict.ndb
+        ndb = ndb.replace(' ', '')
     else:
         subprocess.call(['Rscript', '%s/rda2json2.R' % script_path, nptaskid, doutput])
         tabgnps = pd.read_csv(os.path.join(doutput, 'tabgnps.tsv'), sep='\t')
@@ -384,6 +391,13 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
 
         with open(os.path.join(doutput, 'consensus.json'), 'r') as f:
             consensus = json.load(f)
+
+        with open(os.path.join(doutput, 'params.xml'), 'r') as f:
+            nppar = xmltodict.parse(f.read())
+
+        ndb = [x['#text'] for x in nppar['parameters']['parameter'] if x['@name']=='DATABASE'][0]
+        ndb = ndb.replace(' ', '')
+
 
     # Retrieve candidates from in silico fragmentation
     # following the priority order Fusion > Consensus (fusion2) > MetFrag (score)
@@ -434,8 +448,6 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
         sellist.append(sel)
 
     # check if there is in house database
-    ndb =  ndict.ndb
-    ndb = ndb.replace(' ', '')
     dblist = [getdb(x, struct_db) for x in ndb.split(',')]
     dblist = [pd.read_csv(x, sep='\t') for x in dblist if x is not None]
     db = pd.concat(dblist, ignore_index=True)
@@ -457,6 +469,8 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
             mol = Chem.MolFromSmiles(smi)
             skey = Chem.MolToInchiKey(mol)
             ftabgnps.loc[j, 'INCHI'] = Chem.MolToInchi(mol)
+        else:
+            skey = None
         inchi = ftabgnps.loc[j, 'INCHI']
         if type(inchi)!=float:
             sinchi = Chem.InchiToInchiKey(inchi)
@@ -480,7 +494,7 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
     ftabgnps['InchiKey'] = [Chem.InchiToInchiKey(x) for x in ftabgnps['InChI']]
 
     entity_dict = {}
-    entity_names = pd.read_csv('data/ChemOnt_2_1/entity_names.txt', sep='\t',
+    entity_names = pd.read_csv(chemont, sep='\t',
                                header=None)
 
     entity_names.apply(lambda a: entity_dict.update({a[1]:a[0]}), axis=1)
@@ -488,6 +502,7 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
 
     inchi = ftabgnps.loc[ftabgnps['kingdom_name']=='', 'InChI']
     if len(inchi):
+        # improve speed here
         dflist = get_class(inchi.tolist())
         dflist = pd.concat(dflist)
         dflist['inchikey'] = dflist['inchikey'].str.replace('InChIKey=', '')
@@ -532,10 +547,8 @@ def classify(output_dir, nap_taskid, struct_db, script_path=''):
     #inchikey = [Chem.InchiToInchiKey(x) for x in inchi]
     #class_anno = query_inchikey(inchikey)
 
-    # Total candidates, export stats?
-    #seltab[['cluster.index', 'Ncandidates']][np.invert(seltab[['cluster.index', 'Ncandidates']].duplicated())]['Ncandidates'].sum()
-
-    ftabgnps.to_csv(os.path.join(doutput, 'fully_annotated_gnps.tsv'), index=None, sep='\t')
+    if outfile!='':
+        ftabgnps.to_csv(os.path.join(doutput, outfile), index=None, sep='\t')
     return ftabgnps
 
 def getLibraIDlink(i, tab):
