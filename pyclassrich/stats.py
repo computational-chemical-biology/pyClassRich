@@ -203,6 +203,8 @@ def univariate(annotation, tabgnps, params,
         pvals = tkruskal['pvalue']
         pcor = multipletests(pvals, method='fdr_bh')[1]
 
+    # Warning merge changes the order of
+    # features ids
     ctabsel = pd.merge(ctabsel,
                        feat[['row ID',  'row m/z',
                              'row retention time']],
@@ -232,9 +234,10 @@ def univariate(annotation, tabgnps, params,
                        'Below Threshold': 'grey'}
             plot_volcano(vdf, mode='pdf',
                          filename=os.path.join(input_dir, 'ggplot_volcano.pdf'))
-        ctabsel['fchange'] = fchange
-        ctabsel['pval'] =  pvals
-        ctabsel['cpval'] = pcor
+        ctabsel.sort_values(['row ID'], inplace=True)
+        ctabsel['fchange'] = fchange.tolist()
+        ctabsel['pval'] =  pvals.tolist()
+        ctabsel['cpval'] = pcor.tolist()
     else:
         fchlist = []
         for fch in range(len(cs)):
@@ -265,15 +268,17 @@ def univariate(annotation, tabgnps, params,
                        'Below Threshold': 'grey'}
             plot_volcano(vdf, palette, mode='pdf',
                          filename=os.path.join(input_dir, 'ggplot_volcano.pdf'))
-        ctabsel['fchange'] = mxfchange
-        ctabsel['pval'] =  pvals
-        ctabsel['cpval'] = pcor
+        ctabsel.sort_values(['row ID'], inplace=True)
+        ctabsel['fchange'] = mxfchange.tolist()
+        ctabsel['pval'] =  pvals.tolist()
+        ctabsel['cpval'] = pcor.tolist()
         # Check here
+        fchange.reset_index(drop=True, inplace=True)
         ctabsel = pd.concat([ctabsel, fchange], axis=1)
 
     if filename!='':
         doutput = os.path.join(input_dir, filename)
-        ctabsel.to_csv(os.path.join(doutput),
+        ctabsel.to_csv(doutput,
                        sep='\t', index=None)
     return ctabsel
 

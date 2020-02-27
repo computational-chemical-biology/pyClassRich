@@ -13,6 +13,9 @@ import os
 import json
 import xmltodict
 from rdkit import Chem
+from rdkit.Chem import Descriptors
+
+from matplotlib.backends.backend_pdf import PdfPages
 
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -27,16 +30,20 @@ plt.style.use('ggplot')
 import networkx as nx
 import obonet
 
-def apply_gsea(taskid, nap_taskid, mol_set, OUTDIR, method='ratio_of_classes'):
+from pyclassrich.gnps import Proteosafe
+
+def apply_gsea(nap_taskid, mol_set, params, annotated,
+               class_field, feat=None, meta=None, outdir='',
+               method='ratio_of_classes'):
     """ Applies GSEA to contrast defined groups on FBMN feature tables
     Parameters
     ----------
-    taskid : str
-       Carcara task id
     nap_taskid : str
        NAP task id
     mol_set : str or dict
        Molecular class dictionary
+    outdir : str
+       Output directory
     method : str
       GSEA methods: 'signal_to_noise', 't_test', 'ratio_of_classes',
       'diff_of_classes', 'log2_ratio_of_classes'
@@ -45,27 +52,18 @@ def apply_gsea(taskid, nap_taskid, mol_set, OUTDIR, method='ratio_of_classes'):
     gseapy : object
        gseapy object or dict for multiple comparisons
     """
+    # Is the set static?
+    annotated.loc[annotated['class_id']!=0, 'class_id'].value_counts()
     if type(mol_set)==str:
         with open(mol_set, 'r') as f:
             mol_set = json.load(f)
 
-    dout = os.path.join(OUTDIR, taskid)
-    with open(os.path.join(dout, 'params.yml'), 'r') as stream:
-        params = yaml.safe_load(stream)
-
-    url_to_param = 'http://proteomics2.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=params/' % nap_taskid
-    r = requests.get(url_to_param)
-    plist = xmltodict.parse(r.text)['parameters']['parameter']
-    gtaskid = [x['#text'] for x in plist if x['@name']=='JOBID'][0]
-
-    url_to_metadata = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=metadata_table/" % gtaskid
-    url_to_quantification = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=quantification_table/" % gtaskid
-
-    annotated = pd.read_csv(os.path.join(dout,'annotated_gnps_nap.tsv'),
-                            sep='\t')
-
-    meta = pd.read_csv(io.StringIO(requests.get(url_to_metadata).text), sep='\t')
-    feat = pd.read_csv(io.StringIO(requests.get(url_to_quantification).text))
+    if type(feat)==type(None) or \
+       type(meta)==type(None):
+        gnps = Proteosafe(params['gnps_taskid'], 'MZmine')
+        gnps.get_gnps()
+        feat = gnps.feat
+        meta = gnps.meta
 
     feat = pd.merge(annotated[['cluster.index', 'InchiKey']], feat, left_on='cluster.index', right_on='row ID')
     feat.drop(['cluster.index', 'row m/z', 'row retention time'], axis=1, inplace=True)
@@ -73,6 +71,7 @@ def apply_gsea(taskid, nap_taskid, mol_set, OUTDIR, method='ratio_of_classes'):
     feat.rename(columns={'InchiKey':'NAME', 'row ID':'DESCRIPTION'}, inplace=True)
     feat.columns = feat.columns.str.replace('(.+)\\.mzX?ML .+', '\\1')
     meta['filename'] = meta['filename'].str.replace("\\.mzXML|\\.mzML", "")
+    meta['filename'] = meta['filename'].str.replace('\s+$', '')
 
     if 'filter' in params.keys():
         if params['filter']['perform']:
@@ -100,6 +99,7 @@ def apply_gsea(taskid, nap_taskid, mol_set, OUTDIR, method='ratio_of_classes'):
     if ex.sum():
         feat = feat[~ex]
 
+    # have its own norm param?
     if params['pcoa_norm']:
         feat[feat.columns[2:]] = feat[feat.columns[2:]].apply(lambda a: a/sum(a))
 
@@ -154,7 +154,28 @@ def kstest(df, clusterid, cfield='ChemRICHClusters', pfield='pvalue',
 
 #clusterids = chemrich['ChemRICHClusters'].unique().tolist()
 
-def class_enrichment(chemrich, cfield='ChemRICHClusters', nfield='CompoundName', pfield='pvalue'):
+def class_enrichment(chemrich, cfield='ChemRICHClusters',
+                     nfield='CompoundName', pfield='pvalue',
+                     logp=True):
+    """ Applies class enrichment
+    Parameters
+    ----------
+    chemrich : pd.DataFrame
+       Dataframe containing identifiers, classes and statistics
+    cfield : str
+       Column label for chemical class
+    nfield : str
+       Compound identifiers
+    pfield : str
+       p-value field
+    logp : bool
+       Whether to calculate logp
+    Returns
+    -------
+    chemrich : pd.DataFrame
+       Dataframe with enrichment results
+    """
+
     chemdict = Counter(chemrich[cfield])
     clusterids = np.array(list(chemdict.keys()))
     clusterids = clusterids[np.array(list(chemdict.values()))>2]
@@ -217,12 +238,16 @@ def class_enrichment(chemrich, cfield='ChemRICHClusters', nfield='CompoundName',
     clusterdf = clusterdf[clusterdf['csize'] > 2]
     clusterdf['adjustedpvalue'] = multipletests(clusterdf['pvalues'], method = "fdr_bh")[1]
 
-    xlogp = []
-    for x in clusterdf['name']:
-        logp = np.median(chemrich.loc[chemrich[cfield]==x, 'xlogp'])
-        xlogp.append(logp)
+    if logp:
+        mols = [Chem.MolFromInchi(x) for x in chemrich['InChI']]
+        # Flag 0?
+        chemrich['xlogp'] = [Descriptors.MolLogP(m) if m!=None else 0                                                                                                                             for m in mols]
+        xlogp = []
+        for x in clusterdf['name']:
+            logp = np.median(chemrich.loc[chemrich[cfield]==x, 'xlogp'])
+            xlogp.append(logp)
 
-    clusterdf['xlogp'] = xlogp
+        clusterdf['xlogp'] = xlogp
     return clusterdf
 
 
@@ -232,10 +257,37 @@ def label_point(x, y, val, ax):
         ax.text(point['x']+.02, point['y'], str(point['val']), fontsize=9)
 
 
-def impact_plot(clusterdf, chemrich):
+def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
+                nfield='CompoundName', scaling_factor=20,
+                outdir='', filename='', fig_title=''):
+    """ Impact plot
+    Parameters
+    ----------
+    chemrich : pd.DataFrame
+       Dataframe containing identifiers, classes and statistics
+    clusterdf : pd.DataFrame
+       Dataframe with enrichment results
+    cfield : str
+       Column label for chemical class
+    nfield : str
+       Compound identifiers
+    scaling_factor : int
+       Compound identifiers
+    outdir : str
+       Output directory
+    filename : str
+       file name
+    fig_title : str
+       Figure title
+    Returns
+    -------
+    impact_plot : pdf
+    """
+
+    chemrich[nfield] = chemrich[nfield].astype(str)
     Compounds = []
     for x in clusterdf['name']:
-        cpds = chemrich.loc[chemrich['ChemRICHClusters']==x, 'CompoundName']
+        cpds = chemrich.loc[chemrich[cfield]==x, nfield]
         Compounds.append('<br>'.join(cpds.tolist()))
 
     clusterdf['Compounds'] = Compounds
@@ -258,7 +310,8 @@ def impact_plot(clusterdf, chemrich):
                         cmap=ListedColormap(clist))
 
 
-    s = [20*n for n in clustdf_alt_impact["logPval"]]
+    #s = [scaling_factor*n for n in clustdf_alt_impact["logPval"]]
+    s = [scaling_factor*n for n in clustdf_alt_impact["csize"]]
 
     fig, ax = mpl.pyplot.subplots()
     xlogp = clustdf_alt_impact["xlogp"]
@@ -277,10 +330,16 @@ def impact_plot(clusterdf, chemrich):
     ax.axis([min(xlogp.min()-0.3*xlogp.min(), xmin), xlogp.max()+0.3*xlogp.max(),
               min([logPval.min()-0.3*logPval.min(), ymin]), logPval.max()+0.3*logPval.max()])
 
-    ax.set_xlabel(" -log (pvalue) ")
-    ax.set_ylabel(" median XlogP of clusters ")
+    ax.set_xlabel(" median XlogP of clusters ")
+    ax.set_ylabel(" -log (pvalue) ")
+    ax.set_title(fig_title)
 
-    plt.show()
+    if outdir!='':
+        with PdfPages(os.path.join(outdir, filename)) as pdf:
+            pdf.savefig()
+            plt.close()
+    else:
+        plt.show()
 
     '''
     ax = sns.scatterplot(x="xlogp", y="logPval",
@@ -289,6 +348,130 @@ def impact_plot(clusterdf, chemrich):
                          legend=False, data=clustdf_alt_impact)
 
     '''
+
+def get_impact_plot(ctabsel, params, cfield, nfield,
+                    scaling_factor, hierarchy, outdir,
+                    top=0):
+    """ Calculates chemical enrichment and generates plots
+    Parameters
+    ----------
+    ctabsel : pd.DataFrame
+       Dataframe containing identifiers, classes and statistics
+    params : dict
+       Dict containing the classes being compared
+    cfield : str
+       Column label for chemical class
+    nfield : str
+       Compound identifiers
+    scaling_factor : int
+       Compound identifiers
+    hierarchy : str
+       ClassyFire chemical hierarchy
+    outdir : str
+       Output directory
+    top : int
+       Number of top lower p-values to plot
+    Returns
+    -------
+    impact_plot : pdf
+    chemrich : tsv
+    """
+    outdir = os.path.join(outdir, 'chemrich')
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+
+    ctabsel.fillna(0, inplace=True)
+    cls = params['comparison']['classes']
+    if cls=='all' or len(cls.split(','))>2:
+        clnames = ctabsel.columns[ctabsel.columns.str.contains('_foldchange')]
+        for clname in clnames:
+            ctabsel['fchange'] = ctabsel[clname]
+            class_table = ctabsel.loc[ctabsel['fchange']!=0, ["Identifier", "pval", "fchange", hierarchy, "InChI"]]
+            class_table = class_table[class_table[hierarchy]!=0]
+            class_table.sort_values([hierarchy], inplace=True)
+            class_table[0] = list(range(class_table.shape[0]))
+            # Column names are hard coded to c and nfield pars
+            class_table.columns = ['compound names', 'pvalue', 'foldchange', 'class', 'InChI', 'order']
+            class_table.reset_index(drop=True, inplace=True)
+
+            prefix = clname.split('_')[0]
+            cfilename='impact_plot_%s_%s.tsv' % (prefix, hierarchy)
+            chemrich = class_enrichment(class_table, cfield=cfield,
+                                        nfield=nfield)
+            chemrich.to_csv(os.path.join(outdir, cfilename),
+                            sep='\t', index=None)
+            if top!=0:
+                chemrich = chemrich.sort_values(['pvalues']).iloc[:top,:]
+            fig_title = '%s vs Average' % prefix
+            filename='impact_plot_%s_%s.pdf' % (prefix, hierarchy)
+            impact_plot(chemrich, class_table, cfield=cfield,
+                        nfield=nfield, scaling_factor=scaling_factor,
+                        outdir=outdir, filename=filename,
+                        fig_title=fig_title)
+    else:
+        # Are compound names taken from GNPS?
+        class_table = ctabsel.loc[ctabsel['fchange']!=0, ["Identifier", "pval", "fchange", hierarchy, "InChI"]]
+        class_table = class_table[class_table[hierarchy]!=0]
+        class_table.sort_values([hierarchy], inplace=True)
+        class_table[0] = list(range(class_table.shape[0]))
+        class_table.columns = ['compound names', 'pvalue', 'foldchange', 'class', 'InChI', 'order']
+        class_table.reset_index(drop=True, inplace=True)
+
+        chemrich = class_enrichment(class_table, cfield=cfield, nfield=nfield)
+        chemrich.to_csv(os.path.join(outdir, 'chemrich_%s.tsv' % hierarchy),
+                        sep='\t', index=None)
+        impact_plot(chemrich, class_table, cfield=cfield,
+                    nfield=nfield, outdir=outdir,
+                    scaling_factor=scaling_factor,
+                    filename='impact_plot_%s.pdf' % hierarchy,
+                    fig_title=' vs '.join(cls.split(',')))
+
+# To be applied 
+def plot_classes_by_group(ctabsel):
+    """ Upregulated classes by category
+    Parameters
+    ----------
+    ctabsel : pd.DataFrame
+       Dataframe containing identifiers, classes and statistics
+    cfield : str
+       Column label for chemical class
+    outdir : str
+       Output directory
+    filename : str
+       file name
+    fig_title : str
+       Figure title
+    Returns
+    -------
+    count_plots : pdf
+    """
+
+
+    ctabsel['max_class'] = ctabsel.iloc[:,ctabsel.columns.str.contains('_foldchange')].apply(lambda a: a.idxmax(), axis=1)
+
+    df = pd.DataFrame(Counter(ctabsel.loc[ctabsel['pval']<0.05, 'max_class']), index=[0]).T.reset_index()
+    df.columns = ['Class', 'Metabolite Count']
+    df['Class'] = df['Class'].str.replace('_foldchange', '')
+    ax = df.plot.bar(x='Class', y='Metabolite Count', rot=45)
+
+    with PdfPages(os.path.join(outdir, 'significant_barplot.pdf')) as pdf:
+        pdf.savefig()
+        plt.close()
+
+    df = ctabsel.groupby([cfield, 'max_class']).size().reset_index(name='counts')
+    df = df[df[cfield]!=0]
+    mx = ctabsel[cfield].value_counts().sort_values().tail(10).index[:9]
+    df = df[df[cfield].isin(mx)]
+    df['max_name'] = df['max_name'].str.replace('_foldchange', '')
+
+    ax = sns.barplot(x=cfield, y="counts", hue="max_class", data=df)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    ax.tick_params(labelsize=5)
+
+    with PdfPages(os.path.join(outdir, 'class_location.pdf')) as pdf:
+        pdf.savefig()
+        plt.close()
+
 
 
 def ont_graph(clusterdf_all, obo_file='ChemOnt_2_1/ChemOnt_2_1.obo',
