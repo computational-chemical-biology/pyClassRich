@@ -7,7 +7,7 @@ import json
 
 class Proteosafe:
     def __init__(self, taskid, workflow):
-        """ Build GNPS node attributes and edge list
+        """ Builds GNPS node attributes and edge list
         Returns
         -------
         gnps  :  gnps task identification data

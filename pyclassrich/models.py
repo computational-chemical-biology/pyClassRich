@@ -33,7 +33,7 @@ import obonet
 from pyclassrich.gnps import Proteosafe
 
 def apply_gsea(nap_taskid, mol_set, params, annotated,
-               class_field, feat=None, meta=None, outdir='',
+               feat=None, meta=None, outdir='',
                method='ratio_of_classes'):
     """ Applies GSEA to contrast defined groups on FBMN feature tables
     Parameters
@@ -52,8 +52,6 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
     gseapy : object
        gseapy object or dict for multiple comparisons
     """
-    # Is the set static?
-    annotated.loc[annotated['class_id']!=0, 'class_id'].value_counts()
     if type(mol_set)==str:
         with open(mol_set, 'r') as f:
             mol_set = json.load(f)
@@ -92,7 +90,8 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
     meta = meta[meta[cn].isin(cs)]
     cls_vec = meta[cn].tolist()
     feat = feat[['NAME', 'DESCRIPTION']+meta['filename'].tolist()]
-    feat = feat[~((feat['NAME']=='') | (feat['NAME'].isnull()))]
+    feat = feat[~((feat['NAME']=='') | (feat['NAME'].isnull()) |
+                 (feat['NAME'])==0)]
     feat['DESCRIPTION'] = 0
 
     ex = feat[feat.columns[2:]].apply(lambda a: sum(a)==0, axis=1)
@@ -112,11 +111,30 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
     if len(cs)>2:
         gsea_dict = {}
         for c in cs:
-            cls_vec_tmp = np.array(cls_vec)
-            cls_vec_tmp[cls_vec_tmp!=c] = 'others'
+            gsea_dict[c] = {}
+            for key,value  in mol_set.items():
+                cls_vec_tmp = np.array(cls_vec)
+                cls_vec_tmp[cls_vec_tmp!=c] = 'others'
+                gs_res = gp.gsea(data=feat, # or data='./P53_resampling_data.txt'
+                                 gene_sets=value, # enrichr library names
+                                 cls=cls_vec_tmp.tolist(), # './data/P53.cls'
+                                 # set permutation_type to phenotype if samples >=15
+                                 permutation_type='phenotype',
+                                 permutation_num=1000, # reduce number to speed up test
+                                 outdir=None,  # do not write output to disk
+                                 no_plot=True, # Skip plotting
+                                 method=method,
+                                 processes=4,
+                                 format='png')
+                gsea_dict[c][key] = gs_res
+        return gsea_dict
+    else:
+        gsea_dict = {}
+        for key,value  in mol_set.items():
+            gsea_dict[key] = {}
             gs_res = gp.gsea(data=feat, # or data='./P53_resampling_data.txt'
                              gene_sets=mol_set, # enrichr library names
-                             cls=cls_vec_tmp.tolist(), # './data/P53.cls'
+                             cls=cls_vec, # './data/P53.cls'
                              # set permutation_type to phenotype if samples >=15
                              permutation_type='phenotype',
                              permutation_num=1000, # reduce number to speed up test
@@ -125,20 +143,7 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
                              method=method,
                              processes=4,
                              format='png')
-            gsea_dict[c] = gs_res
-        return gsea_dict
-    else:
-        gs_res = gp.gsea(data=feat, # or data='./P53_resampling_data.txt'
-                         gene_sets=mol_set, # enrichr library names
-                         cls=cls_vec, # './data/P53.cls'
-                         # set permutation_type to phenotype if samples >=15
-                         permutation_type='phenotype',
-                         permutation_num=1000, # reduce number to speed up test
-                         outdir=None,  # do not write output to disk
-                         no_plot=True, # Skip plotting
-                         method=method,
-                         processes=4,
-                         format='png')
+            gsea_dict[key] = gs_res
         return gs_res
 
 def kstest(df, clusterid, cfield='ChemRICHClusters', pfield='pvalue',
@@ -445,8 +450,6 @@ def plot_classes_by_group(ctabsel):
     -------
     count_plots : pdf
     """
-
-
     ctabsel['max_class'] = ctabsel.iloc[:,ctabsel.columns.str.contains('_foldchange')].apply(lambda a: a.idxmax(), axis=1)
 
     df = pd.DataFrame(Counter(ctabsel.loc[ctabsel['pval']<0.05, 'max_class']), index=[0]).T.reset_index()
@@ -542,23 +545,18 @@ def ont_graph(clusterdf_all, obo_file='ChemOnt_2_1/ChemOnt_2_1.obo',
 
 
 
-def db2set(entity_names, class_set, db,
-           field='InChI', classyfire_name='class_name',
+def db2set(db, obo_file, field='InChI',
            outfile=None):
     """ Creates class dictionaries from databases containing
         structural information
     Parameters
     ----------
-    entity_names : str or pandas.DataFrame
-       ClassyFire class to id relationship
-    class_set : str or dict
-       Reference class dictionary
     db : str or pandas.DataFrame
        Database containing InChI or SMILES and ClassyFire name
+    obo_file : str
+       ChemOnt file path
     field : str
        InChI or SMILES
-    classyfire_name : str
-       ClassyFire name present in the database
     outfile : str
        Output file for new set
     Returns
@@ -569,12 +567,15 @@ def db2set(entity_names, class_set, db,
     .json : file
        gseapy object
     """
-    if type(entity_names)==str:
-        entity_names = pd.read_csv(entity_names, sep='\t', header=None)
+    clfy = Chemont(obo_file)
+    clfy.class_hierarchy()
+    # There are a few instances where the id is in a different
+    # hierarchy
+    #set(ctabsel.loc[ctabsel['class_id']!=0, 'class_id'])-set(clfy.classes)
 
-    if type(class_set)==str:
-        with open(class_set) as f:
-            class_set = json.load(f)
+    entity_names = pd.DataFrame(clfy.id_to_name, index=[0]).T
+    entity_names.reset_index(inplace=True)
+    entity_names.columns = [0, 1]
 
     if type(db)==str:
         db = pd.read_csv(db, sep='\t')
@@ -586,16 +587,67 @@ def db2set(entity_names, class_set, db,
         db['InChIKey'] = [Chem.MolToInchiKey(Chem.MolFromSmiles(x))
                           if type(x)==str else '' for x in db['SMILES']]
 
-    db = pd.merge(db, entity_names, left_on=classyfire_name, right_on=1)
+    class_set = {}
+    class_set['superclass_name'] = clfy.supclass
+    class_set['class_name'] = clfy.classes
+    class_set['subclass_name'] = clfy.subclass
 
     db2set = {}
-    for k in list(class_set.keys()):
-        set_list = db.loc[db[0]==k, 'InChIKey'].unique().tolist()
-        if len(set_list)>2:
-            db2set[k] = set_list
+    for key, value in class_set.items():
+        db_tmp = pd.merge(db, entity_names, left_on=key, right_on=1)
+        db2set[key] = {}
+        for k in value:
+            set_list = db_tmp.loc[db_tmp[0]==k, 'InChIKey'].unique().tolist()
+            if len(set_list)>2:
+                db2set[key][k] = set_list
 
     if outfile!=None:
         with open(outfile, 'w+') as f:
             json.dump(db2set, f, indent=4)
 
     return db2set
+
+class Chemont:
+    def __init__(self, chemont_file):
+        """ Builds ChemOnt object
+        Returns
+        -------
+        obonet  : obonet DAG
+        """
+        self.graph = obonet.read_obo(chemont_file)
+        self.id_to_name = {id_: data.get('name') for id_, data in self.graph.nodes(data=True)}
+
+    def is_directed_acyclic_graph(self):
+        return nx.is_directed_acyclic_graph(self.graph)
+
+    def descendants(self, nodeid):
+        return nx.descendants(self.graph, nodeid)
+    def ancestors(self, nodeid):
+        return nx.ancestors(self.graph, nodeid)
+    def edges_to_parents(self, nodeid):
+        # Find edges to parent terms
+        for child, parent, key in self.graph.out_edges(nodeid, keys=True):
+            print(f'• {self.id_to_name[child]} ⟶ {key} ⟶ {self.id_to_name[parent]}')
+
+    def edges_to_children(self, nodeid):
+        # Find edges to children terms
+        for parent, child, key in self.graph.in_edges(nodeid, keys=True):
+            print(f'• {self.id_to_name[child]} ⟵ {key} ⟵ {self.id_to_name[parent]}')
+
+    def class_hierarchy(self):
+        # super class
+        # 
+        node = 'CHEMONTID:0000000'
+        supclass = []
+        classes = []
+        subclass = []
+        for parent, child, key in self.graph.in_edges(node, keys=True):
+            supclass.append(parent)
+            for pt, cd, ky in self.graph.in_edges(parent, keys=True):
+                classes.append(pt)
+                for p, c, k in self.graph.in_edges(pt, keys=True):
+                    subclass.append(p)
+        self.supclass = supclass
+        self.classes = classes
+        self.subclass = subclass
+
