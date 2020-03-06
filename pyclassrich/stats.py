@@ -287,16 +287,24 @@ nonphyl_metrics = {'braycurtis', 'canberra', 'chebyshev', 'cityblock', 'correlat
                        'rogerstanimoto', 'russellrao', 'seuclidean', 'sokalmichener', 'sokalsneath',
                        'sqeuclidean', 'wminkowski', 'yule'}
 
-def plot_emperor(taskid, nap_taskid, metric):
+def plot_emperor(nap_taskid, metric,
+                 params, out_dir,
+                 features=None, metadata=None):
     """ Creates emperor plot to MZmine quantification table.
     Parameters
     ----------
-    taskid : str
-       Carcara task id
     nap_taskid : str
        NAP task id
     metric : str
       Dissimilarity measure, options available in nonphyl_metrics dict
+    params : dict or str
+      Parameters dictionary or yml file location
+    out_dir : str
+      Output directory
+    metadata : pandas.DataFrame
+      Feature metadata if nap_taskid is None
+    features : pandas.DataFrame
+      Feature quantification if nap_taskid is None
     Returns
     -------
     .qzv : file
@@ -304,20 +312,23 @@ def plot_emperor(taskid, nap_taskid, metric):
     """
 
     """emperor_plot.py <taskid> <metric> <nap_taskid>"""
-    target_url = "http://proteomics2.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=params/" % nap_taskid
-    r = requests.get(target_url)
-    plist = xmltodict.parse(r.text)['parameters']['parameter']
-    gtaskid = [x['#text'] for x in plist if x['@name']=='JOBID'][0]
 
-    url_to_metadata = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=metadata_table/" % gtaskid
-    url_to_quantification = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=quantification_table/" % gtaskid
+    if nap_taskid==None:
+        ndict = Proteosafe(nap_taskid, 'NAP')
+        ndict.get_nap()
 
-    dout = os.path.join(OUTDIR, taskid)
-    with open(os.path.join(dout, 'params.yml'), 'r') as stream:
-        params = yaml.safe_load(stream)
+        gnps = Proteosafe(ndict.gtaskid, 'MZmine')
+        gnps.get_gnps()
+        sample_metadata = metadata
+        df = features
+    else:
+        sample_metadata = gnps.meta
+        df = gnps.feat
 
-    sample_metadata = pd.read_csv(io.StringIO(requests.get(url_to_metadata).text), sep='\t')
-    #sample_metadata = pd.read_csv(os.path.join(dout,'metadata.tsv'), sep='\t')
+    if type(params)==str:
+        with open(os.path.join(out_dir, params), 'r') as stream:
+            params = yaml.safe_load(stream)
+
     sample_metadata.rename(index=str, columns={"filename": "#SampleID"}, inplace=True)
     sample_metadata.columns = sample_metadata.columns.str.replace('\s', '_')
 
@@ -335,7 +346,6 @@ def plot_emperor(taskid, nap_taskid, metric):
     sample_metadata.drop(['#SampleID'], axis=1, inplace=True)
     qsample_metadata = qiime2.metadata.Metadata(sample_metadata.apply(lambda a: a.str.replace(' $', '')))
 
-    df = pd.read_csv(io.StringIO(requests.get(url_to_quantification).text))
     df2 = df[df.columns[df.columns.str.contains(' Peak area')]]
     df2.columns = [re.sub('(.+\.mzX?ML) .+', '\\1', a) for a in df2.columns]
     df2.index = df['row ID'].astype(str)
@@ -356,6 +366,7 @@ def plot_emperor(taskid, nap_taskid, metric):
     pcoa = diversity.methods.pcoa(dm1)
     emperor_plot = emperor.visualizers.plot(pcoa.pcoa,
                                             qsample_metadata)
-    emperor_plot.visualization.export_data(os.path.join(dout,'qzv'))
+    emperor_plot.visualization.export_data(os.path.join(out_dir,'qzv'))
+    return pcoa
 
 

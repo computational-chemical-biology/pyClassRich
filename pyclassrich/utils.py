@@ -629,36 +629,45 @@ def linkpattern(id):
         url = "https://pubchem.ncbi.nlm.nih.gov/search/#collection=compounds&query_type=text&query="+id
         return '<a href=\"'+ url + '\" target=\"_blank\">'+id+'</a>'
 
-def html_tab(taskid, nap_taskid):
+def html_tab(nap_taskid, out_dir,
+             fully_annotated_gnps,
+             annotated_gnps_nap):
     """ Classifies structural annotations from GNPS/NAP
         in decreasing order of confidence
     Parameters
     ----------
-    taskid : str
-       Carcara task id
     nap_taskid : str
        NAP task id
-    script_path : str
-       path to rda2json conversion script, assumes
-       Rscript is on the path.
+    out_dir : str
+      Output directory
+    fully_annotated_gnps: str or pandas.DataFrame
+      DataFrame containing structural annotation
+    annotated_gnps_nap: str or pandas.DataFrame
+      DataFrame containing structural annotation and univariate results
     Returns
     -------
     .tsv : file
        fully annotated GNPS/NAP table saved to OUTDIR
-    status : str
-       status code DONE
+    stats : pandas.DataFrame
+       Formatted DataFrame
     """
-    dout = os.path.join(OUTDIR, taskid)
-    df = pd.read_csv(os.path.join(dout, 'fully_annotated_gnps.tsv'), sep='\t')
-    stat = pd.read_csv(os.path.join(dout, 'annotated_gnps_nap.tsv'), sep='\t')
+    if type(fully_annotated_gnps)==str:
+        df = pd.read_csv(os.path.join(out_dir, fully_annotated_gnps), sep='\t')
+    else:
+        df = fully_annotated_gnps
+    if type(annotated_gnps_nap)==str:
+        stat = pd.read_csv(os.path.join(out_dir, annotated_gnps_nap), sep='\t')
+    else:
+        stat = annotated_gnps_nap
 
     stat.drop(['InchiKey','kingdom_name', 'superclass_name'], axis=1, inplace=True)
 
-    url_to_param = 'http://proteomics2.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=params/' % nap_taskid
-    nppar = xmltodict.parse(requests.get(url_to_param).text)
-    gnps_taskid = [x['#text'] for x in nppar['parameters']['parameter'] if x['@name']=='JOBID'][0]
-    url_to_attributes = "http://gnps.ucsd.edu/ProteoSAFe/DownloadResultFile?task=%s&block=main&file=clusterinfo_summary/" % (gnps_taskid)
-    gnps = pd.read_csv(io.StringIO(requests.get(url_to_attributes).text), sep='\t')
+    ndict = Proteosafe(nap_taskid, 'NAP')
+    ndict.get_nap()
+
+    gnps = Proteosafe(ndict.gtaskid, 'MZmine')
+    gnps.get_gnps()
+    gnps = gnps.gnps
 
     stat.fillna('', inplace=True)
     stat['LibraryID'] = stat['LibraryID'].apply(lambda a: getLibraIDlink(a, gnps) if a!='' else '')
@@ -669,6 +678,6 @@ def html_tab(taskid, nap_taskid):
 
     stat['parent.mass'] = stat['row m/z']
     stat['RTMean'] = stat['row retention time']
-    stat.to_csv(os.path.join(dout,'tsv2html.txt'), index=None, sep='\t')
+    stat.to_csv(os.path.join(out_dir,'tsv2html.txt'), index=None, sep='\t')
     return stat
 
