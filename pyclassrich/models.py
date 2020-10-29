@@ -197,7 +197,7 @@ def class_enrichment(chemrich, cfield='ChemRICHClusters',
     clusterids = clusterids[np.array(list(chemdict.values()))>2]
     clusterids = clusterids[(clusterids!='nan') & (clusterids!='')]
 
-    if method=='ktest':
+    if method=='kstest':
         clspvals = [kstest(chemrich, x, cfield=cfield, pfield=pfield) for x in clusterids]
         clspvals = np.array(clspvals)
         # May be not needed
