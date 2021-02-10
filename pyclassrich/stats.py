@@ -13,6 +13,7 @@ import qiime2
 from qiime2 import Artifact
 import pandas as pd
 from qiime2.plugins import metadata, feature_table, diversity, emperor
+from q2_emperor import plot, procrustes_plot, biplot, generic_plot
 from scipy.spatial.distance import squareform, pdist
 import os
 import sys
@@ -27,7 +28,7 @@ import skbio
 from pyclassrich.gnps import Proteosafe
 from pyclassrich.plots import plot_volcano
 
-def multi_class(data, cn, features, method):
+def multi_class(data, cn, fnames, method):
     if len(data.groupby(cn)) <= 2:
         raise Exception('ANOVA requires a secondary index with three or more values')
     if method=='anova':
@@ -39,7 +40,11 @@ def multi_class(data, cn, features, method):
         cls = []
         for k, v in data[[cn,col]].groupby(cn):
             cls.append(v[col])
-        vstats.append(func(*cls))
+        try:
+            s = func(*cls)
+        except:
+            s = (0,1)
+        vstats.append(s)
     return pd.DataFrame(vstats)
 
 def univariate(annotation, tabgnps, params,
@@ -93,7 +98,7 @@ def univariate(annotation, tabgnps, params,
         ndict = Proteosafe(nap_taskid, 'NAP')
         ndict.get_gnps_taskid()
         gtaskid = ndict.gtaskid
-        quant = Proteosafe(gtaskid, 'MZmine')
+        quant = Proteosafe(gtaskid, 'FBMN')
         quant.get_gnps()
         feat = quant.feat
 
@@ -167,8 +172,9 @@ def univariate(annotation, tabgnps, params,
         cn = params['comparison']['field']
         idx0 = feat2.index[np.where(feat2[cn]==cs[0])]
         idx1 = feat2.index[np.where(feat2[cn]==cs[1])]
-        ttest = feat2[fnames].apply(lambda a: stats.ttest_ind(a[idx0], a[idx1]))
-        ttest = pd.DataFrame(ttest.tolist())
+        ttest = feat2[fnames].apply(lambda a: stats.ttest_ind(a[idx0], a[idx1],
+        equal_var = False)).T
+        ttest.columns = ['statistic', 'pvalue']
         pvals = ttest['pvalue']
         pcor = multipletests(pvals, method='fdr_bh')[1]
     elif params['comparison']['test']=='wilcox':
@@ -176,8 +182,8 @@ def univariate(annotation, tabgnps, params,
         cn = params['comparison']['field']
         idx0 = feat2.index[np.where(feat2[cn]==cs[0])]
         idx1 = feat2.index[np.where(feat2[cn]==cs[1])]
-        tkruskal = feat2[fnames].apply(lambda a: stats.kruskal(a[idx0], a[idx1]))
-        tkruskal = pd.DataFrame(tkruskal.tolist())
+        tkruskal = feat2[fnames].apply(lambda a: stats.kruskal(a[idx0], a[idx1])).T
+        tkruskal.columns = ['statistic', 'pvalue']
         pvals = tkruskal['pvalue']
         pcor = multipletests(pvals, method='fdr_bh')[1]
     elif params['comparison']['test']=='anova':
@@ -232,7 +238,7 @@ def univariate(annotation, tabgnps, params,
             palette = {cs[0]: 'red',
                        cs[1]: 'blue',
                        'Below Threshold': 'grey'}
-            plot_volcano(vdf, mode='pdf',
+            plot_volcano(vdf, palette, mode='pdf',
                          filename=os.path.join(input_dir, 'ggplot_volcano.pdf'))
         ctabsel.sort_values(['row ID'], inplace=True)
         ctabsel['fchange'] = fchange.tolist()
@@ -369,4 +375,39 @@ def plot_emperor(nap_taskid, metric,
     emperor_plot.visualization.export_data(os.path.join(out_dir,'qzv'))
     return pcoa
 
+def create_emperor_plot(data, meta, data_index, meta_index,
+                        out_dir, scale=False):
 
+    if data_index in data.columns:
+        data.set_index(data_index, inplace=True)
+
+    if meta_index in meta.columns:
+        meta.set_index(meta_index, inplace=True)
+    meta.index.name = 'id'
+    meta = meta[~meta.index.isnull()]
+
+    data = data[data.index.isin(meta.index)]
+    if scale:
+        data = data.apply(lambda a: (a-a.mean())/a.std())
+
+    eigvals = pd.Series(np.array([0.50, 0.25, 0.25]),
+                        index=['PC1', 'PC2', 'PC3'])
+    proportion_explained = pd.Series([0.34, 0.33, 0.33], index=['PC1', 'PC2', 'PC3'])
+    data.columns = ['PC1', 'PC2', 'PC3']
+
+    #data['PC1'].quantile([0.05, 0.1, 0.25, 0.5, 0.75])
+
+    pcoa = skbio.OrdinationResults('PCoA',
+           'Principal Coordinate Analysis',
+            eigvals,
+            data,
+            proportion_explained=proportion_explained)
+
+    metadata = qiime2.Metadata(meta)
+    pcoa = Artifact.import_data('PCoAResults', pcoa)
+    emperor_plot = emperor.visualizers.plot(pcoa,
+                                            metadata)
+    if '.qzv' in out_dir:
+        emperor_plot.visualization.save(out_dir)
+    else:
+        emperor_plot.visualization.export_data(out_dir)

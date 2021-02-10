@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 from collections import Counter
@@ -6,12 +5,9 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 import gseapy as gp
 
-import requests
 import io
-import yaml
 import os
 import json
-import xmltodict
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 
@@ -31,6 +27,16 @@ import networkx as nx
 import obonet
 
 from pyclassrich.gnps import Proteosafe
+
+try:
+    import importlib.resources as pkg_resources
+except ImportError:
+    # Try backported to PY<37 `importlib_resources`.
+    import importlib_resources as pkg_resources
+
+from . import data
+
+
 
 def apply_gsea(nap_taskid, mol_set, params, annotated,
                feat=None, meta=None, outdir='',
@@ -338,6 +344,8 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
     clusterdf['Compounds'] = Compounds
 
     clustdf = clusterdf[clusterdf['pvalues'] != 1 ]
+    if not len(clustdf):
+        raise ValueError("No significantly different class found!")
     clustdf_alt_impact = clustdf[(clustdf['pvalues'] < 0.05) &
                                   (clustdf['csize'] > 1) &
                                   (clustdf['alteredMetabolites'] > 1)]
@@ -479,7 +487,8 @@ def get_impact_plot(ctabsel, params, cfield, nfield, method,
                     fig_title=' vs '.join(cls.split(',')))
 
 # To be applied 
-def plot_classes_by_group(ctabsel):
+def plot_classes_by_group(ctabsel, cfield, outdir,
+                          filename, fig_title):
     """ Upregulated classes by category
     Parameters
     ----------
@@ -593,7 +602,7 @@ def ont_graph(clusterdf_all, obo_file='scripts/ChemOnt_2_1/ChemOnt_2_1.obo',
         nx.write_gml(G, out_file)
 
 def get_ont_graph(ctabsel, params, cfield, nfield, method,
-                  outdir, scaling_factor=10):
+                  outdir, scaling_factor=10, **kwargs):
     """ Calculates chemical enrichment and generates plots
     Parameters
     ----------
@@ -648,7 +657,7 @@ def get_ont_graph(ctabsel, params, cfield, nfield, method,
             clusterdf_all = pd.concat(chemlist).reset_index(drop=True)
             filename = 'ont_graph_%s_%s.gml' % (method, clname)
             filename = os.path.join(outdir, filename)
-            ont_graph(clusterdf_all, out_file=filename)
+            ont_graph(clusterdf_all, out_file=filename, **kwargs)
     else:
         chemlist = []
         for hierarchy  in ['superclass_name', 'class_name',
@@ -670,7 +679,7 @@ def get_ont_graph(ctabsel, params, cfield, nfield, method,
 
         filename = 'ont_graph_%s.gml' % method
         filename = os.path.join(outdir, filename)
-        ont_graph(clusterdf_all, out_file=filename)
+        ont_graph(clusterdf_all, out_file=filename, **kwargs)
 
 
 
@@ -739,13 +748,14 @@ def db2set(db, obo_file, field='InChI',
     return db2set
 
 class Chemont:
-    def __init__(self, chemont_file):
+    def __init__(self):
         """ Builds ChemOnt object
         Returns
         -------
         obonet  : obonet DAG
         """
-        self.graph = obonet.read_obo(chemont_file)
+        self.graph = obonet.read_obo(pkg_resources.open_text(data,
+                                                             'ChemOnt_2_1.obo'))
         self.id_to_name = {id_: data.get('name') for id_, data in self.graph.nodes(data=True)}
 
     def is_directed_acyclic_graph(self):

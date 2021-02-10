@@ -6,7 +6,8 @@ setup(
     description='Chemical class enrichment for mass spectrometry',
     license='BSD-3-Clause',
     packages=['pyclassrich'],
+    package_data={'pyclassrich': ['data/ChemOnt_2_1.obo']},
     author='Ricardo R. da Silva',
-    scripts=['bin/layout_script'],
-    author_email='ridasilva@ucsd.edu'
+    scripts=['bin/pyclassrich'],
+    author_email='ridasilva@usp.br'
 )
