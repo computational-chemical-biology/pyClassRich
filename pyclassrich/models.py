@@ -27,26 +27,16 @@ import networkx as nx
 import obonet
 
 from pyclassrich.gnps import Proteosafe
+from pyclassrich.utils import get_db
 
-try:
-    import importlib.resources as pkg_resources
-except ImportError:
-    # Try backported to PY<37 `importlib_resources`.
-    import importlib_resources as pkg_resources
+this_dir, this_filename = os.path.split(__file__)
 
-from . import data
-
-
-
-def apply_gsea(nap_taskid, mol_set, params, annotated,
-               feat=None, meta=None, outdir='',
-               method='ratio_of_classes', clname='',
-               cfield=''):
+def apply_gsea(mol_set, params, annotated, feat=None,
+               meta=None, cfield='class', outdir='',
+               method='ratio_of_classes'):
     """ Applies GSEA to contrast defined groups on FBMN feature tables
     Parameters
     ----------
-    nap_taskid : str
-       NAP task id
     mol_set : str or dict
        Molecular class dictionary
     outdir : str
@@ -65,7 +55,7 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
 
     if type(feat)==type(None) or \
        type(meta)==type(None):
-        gnps = Proteosafe(params['gnps_taskid'], 'MZmine')
+        gnps = Proteosafe(params['gnps_taskid'], 'FBMN')
         gnps.get_gnps()
         feat = gnps.feat
         meta = gnps.meta
@@ -95,8 +85,9 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
         cs = params['comparison']['classes'].split(',')
 
     meta = meta[meta[cn].isin(cs)]
-    cls_vec = meta[cn].tolist()
-    feat = feat[['NAME', 'DESCRIPTION']+meta['filename'].tolist()]
+    cnames = list(set(feat.columns).intersection(set(meta['filename'])))
+    cls_vec = meta.loc[meta['filename'].isin(cnames), cn].tolist()
+    feat = feat[['NAME', 'DESCRIPTION']+cnames]
     feat = feat[~((feat['NAME']=='') | (feat['NAME'].isnull()) |
                  (feat['NAME'])==0)]
     feat['DESCRIPTION'] = 0
@@ -146,7 +137,7 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
                 continue
             gsea_dict[key] = {}
             gs_res = gp.gsea(data=feat, # or data='./P53_resampling_data.txt'
-                             gene_sets=mol_set, # enrichr library names
+                             gene_sets=value, # enrichr library names
                              cls=cls_vec, # './data/P53.cls'
                              # set permutation_type to phenotype if samples >=15
                              permutation_type='phenotype',
@@ -157,7 +148,7 @@ def apply_gsea(nap_taskid, mol_set, params, annotated,
                              processes=4,
                              format='png')
             gsea_dict[key] = gs_res
-        return gs_res
+        return gsea_dict
 
 def kstest(df, clusterid, cfield='ChemRICHClusters', pfield='pvalue',
           alpha=0.05):
@@ -172,7 +163,7 @@ def kstest(df, clusterid, cfield='ChemRICHClusters', pfield='pvalue',
 
 #clusterids = chemrich['ChemRICHClusters'].unique().tolist()
 
-def class_enrichment(chemrich, cfield='ChemRICHClusters',
+def class_enrichment(chemrich, annotated=None, cfield='ChemRICHClusters',
                      nfield='CompoundName', method='kstest',
                      pfield='pvalue', params=None, logp=True):
     """ Applies class enrichment
@@ -212,24 +203,18 @@ def class_enrichment(chemrich, cfield='ChemRICHClusters',
         clusterdf['adjustedpvalue'] = multipletests(clusterdf['pvalues'], method = "fdr_bh")[1]
     elif method=='gsea':
         ndict = Proteosafe(params['nap_taskid'], 'NAP')
-        clfy = Chemont('scripts/ChemOnt_2_1/ChemOnt_2_1.obo')
+        clfy = Chemont()
         ndict.get_nap()
         ndb =  ndict.ndb
         ndb = ndb.replace(' ', '')
-        dblist = [getdb(x, 'scripts/DB/') for x in ndb.split(',')]
-        dblist = [pd.read_csv(x, sep='\t') for x in dblist if x is not None]
-        db = pd.concat(dblist, ignore_index=True)
-        mol_set = db2set(db,
-                        'scripts/ChemOnt_2_1/ChemOnt_2_1.obo')
-        gsres = apply_gsea(params['nap_taskid'], mol_set,
-                          params, ctabsel,
-                          clname=params['clname'].split('_')[0],
-                          cfield=cfield)
+        db = get_db(ndb)
+        mol_set = db2set(db)
+        gsres = apply_gsea(mol_set, params, annotated, cfield)
         cls = params['comparison']['classes']
         if cls=='all' or len(cls.split(','))>2:
             res2d = gsres[params['clname'].split('_')[0]]['%s_name' % cfield].res2d
         else:
-            res2d = gsres['%x_name' % cfield].res2d
+            res2d = gsres['%s_name' % cfield].res2d
         # May be not needed
         clusterdf = res2d[['pval', 'fdr']].reset_index()
         clusterdf.columns = ['name', 'pvalues', 'adjustedpvalue']
@@ -290,7 +275,13 @@ def class_enrichment(chemrich, cfield='ChemRICHClusters',
     clusterdf = clusterdf[clusterdf['csize'] > 2]
 
     if logp:
-        mols = [Chem.MolFromInchi(x) for x in chemrich['InChI']]
+        chemrich.loc[chemrich.InChI.isnull(), 'InChI'] = ''
+        mols = []
+        for x in chemrich['InChI']:
+            try:
+                mols.append(Chem.MolFromInchi(x))
+            except:
+                mols.append(None)
         # Flag 0?
         chemrich['xlogp'] = [Descriptors.MolLogP(m) if m!=None else 0                                                                                                                             for m in mols]
         xlogp = []
@@ -452,7 +443,7 @@ def get_impact_plot(ctabsel, params, cfield, nfield, method,
             prefix = clname.split('_')[0]
             cfilename='impact_plot_%s_%s.tsv' % (prefix, hierarchy)
             params['clname'] = clname
-            chemrich = class_enrichment(class_table, cfield=cfield,
+            chemrich = class_enrichment(class_table, ctabsel, cfield=cfield,
                                         nfield=nfield, method=method,
                                         params=params)
             chemrich.to_csv(os.path.join(outdir, cfilename),
@@ -474,9 +465,11 @@ def get_impact_plot(ctabsel, params, cfield, nfield, method,
         class_table.columns = ['compound names', 'pvalue', 'foldchange', 'class', 'InChI', 'order']
         class_table.reset_index(drop=True, inplace=True)
 
-        chemrich = class_enrichment(class_table, cfield=cfield,
+        chemrich = class_enrichment(class_table, ctabsel, cfield=cfield,
                                         nfield=nfield, method=method,
                                         params=params)
+        if top!=0:
+            chemrich = chemrich.sort_values(['pvalues']).iloc[:top,:]
         chemrich.to_csv(os.path.join(outdir, 'chemrich_%s.tsv' % hierarchy),
                         sep='\t', index=None)
         filename='impact_plot_%s_%s.pdf' % (method, hierarchy)
@@ -506,7 +499,7 @@ def plot_classes_by_group(ctabsel, cfield, outdir,
     -------
     count_plots : pdf
     """
-    ctabsel['max_class'] = ctabsel.iloc[:,ctabsel.columns.str.contains('_foldchange')].apply(lambda a: a.idxmax(), axis=1)
+    ctabsel['max_clasS'] = ctabsel.iloc[:,ctabsel.columns.str.contains('_foldchange')].apply(lambda a: a.idxmax(), axis=1)
 
     df = pd.DataFrame(Counter(ctabsel.loc[ctabsel['pval']<0.05, 'max_class']), index=[0]).T.reset_index()
     df.columns = ['Class', 'Metabolite Count']
@@ -533,9 +526,8 @@ def plot_classes_by_group(ctabsel, cfield, outdir,
 
 
 
-def ont_graph(clusterdf_all, obo_file='scripts/ChemOnt_2_1/ChemOnt_2_1.obo',
-              out_file='', show=False):
-    clfy = Chemont(obo_file)
+def ont_graph(clusterdf_all, out_file='', show=False):
+    clfy = Chemont()
     id_to_name = clfy.id_to_name
     nms = pd.DataFrame(id_to_name, index=[0]).T.reset_index()
     nms.columns = [0, 1]
@@ -650,7 +642,7 @@ def get_ont_graph(ctabsel, params, cfield, nfield, method,
                 prefix = clname.split('_')[0]
                 cfilename='impact_plot_%s_%s.tsv' % (prefix, hierarchy)
                 params['clname'] = clname
-                chemrich = class_enrichment(class_table, cfield=cfield,
+                chemrich = class_enrichment(class_table, ctabsel, cfield=cfield,
                                             nfield=nfield, method=method,
                                             params=params)
                 chemlist.append(chemrich)
@@ -672,28 +664,26 @@ def get_ont_graph(ctabsel, params, cfield, nfield, method,
             cfield, 'InChI', 'order']
             class_table.reset_index(drop=True, inplace=True)
 
-            chemrich = class_enrichment(class_table, cfield=cfield,
+            chemrich = class_enrichment(class_table, ctabsel, cfield=cfield,
                                             nfield=nfield, method=method,
                                             params=params)
             chemlist.append(chemrich)
 
         filename = 'ont_graph_%s.gml' % method
         filename = os.path.join(outdir, filename)
+        clusterdf_all = pd.concat(chemlist).reset_index(drop=True)
         ont_graph(clusterdf_all, out_file=filename, **kwargs)
 
 
 
 
-def db2set(db, obo_file, field='InChI',
-           outfile=None):
+def db2set(db, field='InChI', outfile=None):
     """ Creates class dictionaries from databases containing
         structural information
     Parameters
     ----------
     db : str or pandas.DataFrame
        Database containing InChI or SMILES and ClassyFire name
-    obo_file : str
-       ChemOnt file path
     field : str
        InChI or SMILES
     outfile : str
@@ -706,7 +696,7 @@ def db2set(db, obo_file, field='InChI',
     .json : file
        gseapy object
     """
-    clfy = Chemont(obo_file)
+    clfy = Chemont()
     clfy.class_hierarchy()
     # There are a few instances where the id is in a different
     # hierarchy
@@ -754,8 +744,8 @@ class Chemont:
         -------
         obonet  : obonet DAG
         """
-        self.graph = obonet.read_obo(pkg_resources.open_text(data,
-                                                             'ChemOnt_2_1.obo'))
+        DATA_PATH = os.path.join(this_dir, "data", "ChemOnt_2_1.obo")
+        self.graph = obonet.read_obo(DATA_PATH)
         self.id_to_name = {id_: data.get('name') for id_, data in self.graph.nodes(data=True)}
 
     def is_directed_acyclic_graph(self):

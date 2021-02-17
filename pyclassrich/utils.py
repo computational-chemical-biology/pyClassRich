@@ -91,7 +91,7 @@ def inchi2pth(k, db='kegg'):
         else:
             return req.json()[0]['results']
 
-def classify(proteosafe):
+def classify(taskid):
     """ Classifies structural annotations from GNPS/NAP
         in decreasing order of confidence
     Parameters
@@ -103,6 +103,7 @@ def classify(proteosafe):
     annotated : pd.DataFrame
        fully annotated GNPS/NAP table
     """
+    proteosafe = Proteosafe(taskid, 'NAP')
     proteosafe.get_nap()
     tabgnps = proteosafe.tabgnps
     net = proteosafe.net
@@ -343,3 +344,13 @@ def html_tab(nap_taskid, out_dir,
     stat.to_csv(os.path.join(out_dir,'tsv2html.txt'), index=None, sep='\t')
     return stat
 
+def canopus(uni, canopus, canopus_id,
+            canopus_class):
+    print('Reading canopus file...')
+    uni = pd.merge(uni,
+                  canopus[[canopus_id, canopus_class]],
+                  left_on='row ID', right_on=canopus_id,
+                  how='left')
+    uni.drop(['class_name'], axis=1, inplace=True)
+    uni.rename(columns={canopus_class: 'class_name'}, inplace=True)
+    return uni

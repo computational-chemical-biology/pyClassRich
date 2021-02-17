@@ -1,324 +1,167 @@
-#!/usr/bin/env python3
-
-import pandas as pd
-import numpy as np
-import networkx as nx
-from sklearn.manifold import MDS, TSNE
-from sklearn.neighbors import DistanceMetric
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import requests
-import io
-import re
-import time
-from rdkit import Chem
-from rdkit import DataStructs
-from rdkit.Chem.Fingerprints import FingerprintMols
-from rdkit.Chem import AllChem
-
-import itertools
-from collections import Counter
-#import multiprocessing
-from lprojection.gnps import Gnps
-from lprojection.util import get_N_HexCol
-from lprojection.util import dissimilarity_matrix
-from lprojection.util import get_cluster
-from lprojection.util import get_caccuracy
-from lprojection.util import plot_silhouette
-
 import click
+import yaml
+import json
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from pyclassrich.utils import *
+from pyclassrich.models import *
+
+from pyclassrich.stats import *
+from pyclassrich.gnps import Proteosafe
 
 @click.group()
-def layout_script():
+def class_enrich():
     pass
 
-@layout_script.command()
+@class_enrich.command()
 @click.option("--taskid",
-                  help="GNPS taskid")
-@click.option("--workflow",
-                  default='MZmine',
-                  help="GNPS workflow: MZmine, V1, V2")
-@click.option("--scaling",
-                  default=100.0,
-                  help="Scaling factor for edge distance")
-@click.option("--projection",
-                  default='MDS',
-                  help="Projection method")
-@click.option("--liter",
-                  default=1000,
-                  help="Number iterations parameter range")
-@click.option("--perp",
-                  default=6,
-                  help="Perplexity parameter range")
-@click.option("--learn",
-                  default=200,
-                  help="Learnig rate parameter range")
-@click.option("--linput",
-                  default='Cosine',
-                  help="Input for projection: Cosine, Feature intensities, Tanimoto")
-@click.option("--cthr",
-                  default=0.6,
-                  help="Cosine Threshold to display the edges.")
-@click.option("--meta",
-                  default='',
-                  help="Optional metadata file")
-@click.option("--metac",
-                  default='',
-                  help="Metadata column label")
-@click.option("--graphml",
-                  default=1,
-                  help="Write standard graphml")
-@click.option("--fig",
-                  default=1,
-                  help="Plot espected layout")
-def layout(taskid, workflow, scaling, projection,
-	   liter,  perp, learn, linput, cthr, meta, metac,
-	   graphml, fig):
-    #taskid = taskid.split(',') 
-    #workflow = workflow 
-    gdict = Gnps(taskid, workflow).getGnps()
-    scaling_factor = scaling
-    projection = projection
-    minput = linput
-    metac = metac
-    if meta!='':
-         anno = pd.read_table(meta)
+              default='',
+              help="Optional NAP taskid")
+@click.option("--param",
+              default='',
+              help="Optional parameter file")
+@click.option("--out",
+              help="Output file name")
+def classify(taskid, param, out):
+    if taskid=='' and param!='':
+        with open(param, 'r') as f:
+            params = yaml.safe_load(f)
+        nap_taskid = params['nap_taskid']
+    elif taskid=='':
+        raise ValueError("Provide either param or taskid")
 
-    m = dissimilarity_matrix(gdict)
+    annotated = classify(nap_taskid)
+    annotated.to_csv(out, sep='\t', index=None)
 
-    taskid = taskid.split(',')
-    staskid = taskid[0][:10]
+@class_enrich.command()
+@click.option("--ann",
+              help=".tsv annotation table")
+@click.option("--param",
+              help="Parameter file")
+@click.option("--out",
+              help="Output file name")
+def univariate(ann, param, out):
+    with open(param, 'r') as f:
+        params = yaml.safe_load(f)
 
-    gnps = gdict['gnps']
-    net = gdict['net']
-    nlist = list(set(net['CLUSTERID1'].tolist()+net['CLUSTERID2'].tolist()))
-    nlist.sort()
-    nn = len(nlist)
-    ndict = {}
-    for n in range(nn):
-        ndict[nlist[n]] = n
+    taskid = params['nap_taskid']
+    ndict = Proteosafe(taskid, 'NAP')
+    ndict.get_nap()
+    tabgnps = ndict.tabgnps
 
-#    if minput=='Cosine':
-#        net2 = net.loc[net['Cosine']>=cthr,:]
-#    else:
-#        net2 = net
-#
-#    nlist2 = list(set(net2['CLUSTERID1'].tolist()+net2['CLUSTERID2'].tolist()))
-#    nlist2.sort()
-#    ndict2 = {}
-#    for n in nlist2:
-#        ndict2[n] = ndict[n]
-#
-    G1=nx.Graph()
-    G2=nx.Graph()
-    if gdict['net1'] is not None:
-        net1 = gdict['net1']
-        edge_list = net1[['CLUSTERID1', 'CLUSTERID2']].apply(lambda a: tuple(a.tolist()), axis=1).tolist()
+    gnps = Proteosafe(params['gnps_taskid'], 'FBMN')
+    gnps.get_gnps()
+    feat = gnps.feat
+    meta = gnps.meta
+
+    annotated = pd.read_csv(annotated, sep='\t')
+    df = univariate(annotated, tabgnps,
+                    params, feat, meta)
+
+    df.to_csv(out, sep='\t', index=None)
+
+@class_enrich.command()
+@click.option("--uni",
+              default='',
+              help="Optional univariate table file")
+@click.option("--param",
+              help="Parameter file")
+@click.option("--cfield",
+              default='class',
+              help="Class prefix: class, superclass or subclass")
+@click.option("--nfield",
+              default="compound names",
+              help="Column containing compound identifier")
+@click.option("--method",
+              default="kstest",
+              help="Enrichment test method: kstest or gsea")
+@click.option("--sca",
+              default=5,
+              help="Scaling factor for plot")
+@click.option("--top",
+              default=0,
+              help="Top classes to display")
+@click.option("--out",
+              help="Output directory")
+def impact_plot(uni, param, cfield, nfield,
+                method, sca, top, out):
+    with open(param, 'r') as f:
+        params = yaml.safe_load(f)
+
+    if uni!='':
+        df = pd.read_csv(uni, sep='\t')
     else:
-        edge_list = net[['CLUSTERID1', 'CLUSTERID2']].apply(lambda a: tuple(a.tolist()), axis=1).tolist()
+        taskid = params['nap_taskid']
+        ndict = Proteosafe(taskid, 'NAP')
+        annotated = classify(ndict)
+        ndict.get_nap()
+        tabgnps = ndict.tabgnps
 
-    G1.add_edges_from(edge_list)
-    G2.add_edges_from(edge_list)
+        gnps = Proteosafe(params['gnps_taskid'], 'FBMN')
+        gnps.get_gnps()
+        feat = gnps.feat
+        meta = gnps.meta
+        annotated = classify(ndict)
+        df = univariate(annotated, tabgnps,
+                        params, feat, meta)
 
-    if projection=='MDS':
-        embedding = MDS(n_components=2, dissimilarity='precomputed')
-        m_transformed = embedding.fit_transform(m)
-    elif projection=='TSNE':
-        #m_transformed = TSNE(n_components=2).fit_transform(m)
-        m_transformed = TSNE(n_components=2, n_iter=liter, perplexity=perp,
-	                     learning_rate=learn, metric="precomputed").fit_transform(m)
-    #pos=nx.spring_layout(G)
-    # Few test gnps attributes
-    gnps = gnps[['cluster index', 'parent mass', 'LibraryID']]
-    if meta!='':
-        anno.drop(['parent.mass', 'LibraryID', 'INCHI'], axis=1, inplace=True)
-        gnps = pd.merge(gnps, anno, left_on='cluster index', right_on='cluster index', how='left')
-        gnps.fillna('', inplace=True)
-        if metac in gnps.columns:
-            gnps.loc[gnps[metac]=='', metac] = 'unassigned'
-        # How to create n distinct colors
-        lcol = np.array(list(set(gnps[metac])))
-        if len(lcol)>1:
-            col = get_N_HexCol(len(lcol))
-            dcol = dict(zip(lcol, col))
-        gcol = {}
+        if 'canopus' in params.keys():
+            print('Reading canopus...')
+            canopus_df = pd.read_csv(params['canopus'], sep='\t')
+            df = canopus(df, canopus_df,
+                         params['canopus_id'],
+                         params['canopus_class'])
 
-    gnps.index = gnps['cluster index']
-    gnps.columns = gnps.columns.str.replace(' ', '')
-    gnps.columns = gnps.columns.str.replace('_', '')
-    for key, value in ndict.items():
-        dtmp = gnps.loc[key].to_dict()
-        if meta!='':
-            gcol[gnps.loc[key, 'clusterindex']] = dcol[gnps.loc[key, metac.replace('_', '')]]
-        for k, v in dtmp.items():
-            nx.set_node_attributes(G1, name=k, values={key: v})
-            nx.set_node_attributes(G2, name=k, values={key: v})
+    get_impact_plot(df, params, cfield=cfield, nfield=nfield,
+                    method=method, scaling_factor=sca, top=top,
+                    hierarchy='%s_name' % cfield, outdir=out)
 
-    ptmp=nx.fruchterman_reingold_layout(G1)
-    pos1 = {}
-    for kp, vp in ptmp.items():
-        if meta!='':
-            pos1[kp] = {'x' : 100*scaling_factor*ptmp[kp][0], 'y' : 100*scaling_factor*ptmp[kp][1], 'fill': gcol[kp] }
-        else:
-            pos1[kp] = { 'x' : 100*scaling_factor*ptmp[kp][0], 'y' : 100*scaling_factor*ptmp[kp][1]}
+@class_enrich.command()
+@click.option("--uni",
+              default='',
+              help="Optional univariate table file")
+@click.option("--param",
+              help="Parameter file")
+@click.option("--cfield",
+              default='class',
+              help="Class prefix: class, superclass or subclass")
+@click.option("--nfield",
+              default='compound names',
+              help="Column containing compound identifier")
+@click.option("--method",
+              default='kstest',
+              help="Enrichment test method: kstest or gsea")
+@click.option("--sca",
+              default=5,
+              help="Scaling factor for plot")
+@click.option("--out",
+              help="Output directory")
+def ont_graph(uni, param, cfield, nfield,
+              method, sca, out):
+    with open(param, 'r') as f:
+        params = yaml.safe_load(f)
 
-    nx.set_node_attributes(G1,name='graphics', values=pos1)
-    nx.write_gml(G1, staskid+metac+'.gml', str)
-
-    if fig:
-        with PdfPages(projection+'_'+minput+'_'+metac+'_2D_layout.pdf') as pdf:
-            gnps = gnps.loc[list(ndict.keys())]
-            fig, ax = plt.subplots()
-            for kk, vv  in dcol.items():
-                x = m_transformed[gnps[metac.replace('_', '')]==kk, :][:,0]
-                y = m_transformed[gnps[metac.replace('_', '')]==kk, :][:,1]
-                ax.scatter(x, y, c=vv,  label=kk
-            	                      )
-            #alpha=0.3
-            ax.legend(fontsize=6)
-            #ax.scatter(m_transformed[:, 0], m_transformed[:, 1], c=list(gcol.values()))
-            #ax.legend(handles, labels)
-            pdf.savefig()  # saves the current figure into a pdf page
-            plt.close()
-            fig, ax = plt.subplots()
-            for kk, vv  in dcol.items():
-                x = m_transformed[gnps[metac.replace('_', '')]==kk, :][:,0]
-                y = m_transformed[gnps[metac.replace('_', '')]==kk, :][:,1]
-                ax.scatter(x, y, c=vv,  label=kk)
-            pdf.savefig()  # saves the current figure into a pdf page
-            plt.close()
-            #plt.show()
-
-    pos = {}
-    for key, value in ndict.items():
-        #G.node[key]['x'] = float(m_transformed[value,0])
-        #G.node[key]['y'] = float(m_transformed[value,1])
-        if meta!='':
-            pos[key] = {'x' : scaling_factor*float(m_transformed[value,0]), 'y' : scaling_factor*float(m_transformed[value,1]), 'fill': gcol[key] }
-        else:
-            pos[key] = {'x' : scaling_factor*float(m_transformed[value,0]), 'y' : scaling_factor*float(m_transformed[value,1]) }
-    #nx.write_graphml(G, "cosine_mds.graphml") 
-    nx.set_node_attributes(G2, name='graphics',values=pos)
-    nx.write_gml(G2, staskid+projection+minput+metac+'.gml', str)
-
-@layout_script.command()
-@click.option("--taskid",
-                  help="GNPS taskid")
-@click.option("--workflow",
-                  default='MZmine',
-                  help="GNPS workflow: MZmine, V1, V2")
-@click.option("--projection",
-                  default='MDS',
-                  help="Projection method")
-@click.option("--liter",
-                  default='250,250,1000',
-                  help="Number iterations parameter range")
-@click.option("--perp",
-                  default='6,30,100',
-                  help="Perplexity parameter range")
-@click.option("--learn",
-                  default='200,100,300',
-                  help="Learnig rate parameter range")
-@click.option("--linput",
-                  default='Cosine',
-                  help="Input for projection: Cosine, Feature intensities")
-@click.option("--meta",
-                  default='',
-                  help="Optional metadata file")
-@click.option("--metac",
-                  default='superclass_name',
-                  help="Metadata column label")
-@click.option("--fig",
-                  default=1,
-                  help="Plot espected layout")
-def tsne_optim(taskid, workflow, projection,
-	   liter, perp, learn, linput, meta, metac,
-	   fig):
-    gdict = Gnps(taskid, workflow).getGnps()
-    projection = projection
-    minput = linput
-    metac = metac
-
-    gnps = gdict['gnps']
-    net = gdict['net']
-    anno = pd.read_table(meta)
-
-    if gdict['net1'] is not None:
-        net1 = gdict['net1']
+    if uni!='':
+        df = pd.read_csv(uni, sep='\t')
     else:
-        net1 = net.copy()
+        taskid = params['nap_taskid']
+        ndict = Proteosafe(taskid, 'NAP')
+        annotated = classify(ndict)
+        ndict.get_nap()
+        tabgnps = ndict.tabgnps
 
-    nclust = len(set(net1['ComponentIndex']))
-    # force max num clusters nun classes?
-    nclust = len(set(anno[metac]))
+        gnps = Proteosafe(params['gnps_taskid'], 'FBMN')
+        gnps.get_gnps()
+        feat = gnps.feat
+        meta = gnps.meta
+        annotated = classify(ndict)
+        df = univariate(annotated, tabgnps,
+                        params, feat, meta)
 
-    nlist = list(set(net['CLUSTERID1'].tolist()+net['CLUSTERID2'].tolist()))
-    nlist.sort()
-    nn = len(nlist)
-    ndict = {}
-    for n in range(nn):
-        ndict[nlist[n]] = n
-    if minput=='Cosine':
-        m = np.empty([nn,nn])
-        m[:nn, :nn] = 0
-        for i in net.index:
-            m[ndict[net.loc[i, 'CLUSTERID1']], ndict[net.loc[i, 'CLUSTERID2']]] = net.loc[i, 'Cosine']
-            m[ndict[net.loc[i, 'CLUSTERID2']], ndict[net.loc[i, 'CLUSTERID1']]] = net.loc[i, 'Cosine']
-        m = 1-m
-    elif minput=='Feature intensities':
-        features = pd.read_csv(io.StringIO(requests.get(url_to_features).text))
-        features.index = features['row ID']
-        dist = DistanceMetric.get_metric('canberra')
-        m = dist.pairwise(features.loc[nlist][features.columns[3:]])
-
-    staskid = taskid[0][:10]
-
-    #list(range(250, 1000+250, 250)) 
-    #niter = [250, 1000, 1000]
-    #perp = [2, 6, 30, 50, 100] 
-    #lrate = [200, 300]
-    niter = list(map(int, liter.split(',')))
-    niter = list(range(niter[0], niter[2]+niter[1], niter[1]))
-    perp = list(map(int, perp.split(',')))
-    perp = list(range(perp[0], perp[2]+perp[1], perp[1]))
-    learn = list(map(int, learn.split(',')))
-    learn = list(range(learn[0], learn[2]+learn[1], learn[1]))
-
-    parcomb = list(itertools.product(*[niter, perp, learn]))
-
-    mlist = []
-    for par in parcomb:
-        mlist.append(TSNE(n_components=2, n_iter=par[0], perplexity=par[1],
-			  learning_rate=par[2], metric="precomputed").fit_transform(m))
-
-    gnps = gnps[['cluster index', 'parent mass', 'LibraryID']]
-    gnps = pd.merge(gnps, anno, left_on='cluster index', right_on='cluster index', how='left')
-    gnps.fillna('', inplace=True)
-    gnps.index = gnps['cluster index']
-    gnps = gnps.loc[list(ndict.keys())]
-
-    laccuracy = []
-    with PdfPages('silhouette_test.pdf') as pdf:
-        for ii in range(len(mlist)):
-            X = mlist[ii]
-            ncs = get_cluster(X, nclust)
-            caccuracy = get_caccuracy(ncs, gnps, metac, method='mean')
-            gnps['clabel_%s' % ii] = ncs['cluster_labels'][caccuracy['maxCaccuracyN']-2]
-            caccuracy['n_iter'] = parcomb[ii][0]
-            caccuracy['perplexity'] = parcomb[ii][1]
-            caccuracy['learning_rate'] = parcomb[ii][2]
-            laccuracy.append(caccuracy)
-            fig, ax1, ax2 = plot_silhouette(X, caccuracy['maxCaccuracyN'], caccuracy['maxCaccuracySilhoutte'],
-	                                    parcomb[ii], show=False)
-            pdf.savefig()  # saves the current figure into a pdf page 
-            plt.close()
-    pd.DataFrame(laccuracy).to_csv(staskid+'_clusterng_accuracy.tsv', sep='\t', index=None)
-    gnps.to_csv(staskid+'_gnps_cluster_labels.tsv', sep='\t', index=None)
-
+    get_ont_graph(df, params, cfield=cfield, nfield=nfield,
+                  method=method, scaling_factor=sca, outdir=out)
 
 if __name__ == '__main__':
-    start_time = time.time()
-    from lprojection.util import dissimilarity_matrix
-    layout_script()
-    print("--- %s seconds ---" % (time.time() - start_time))
+    class_enrich()
 
