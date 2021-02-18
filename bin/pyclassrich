@@ -23,7 +23,7 @@ def class_enrich():
               help="Optional parameter file")
 @click.option("--out",
               help="Output file name")
-def classify(taskid, param, out):
+def classification(taskid, param, out):
     if taskid=='' and param!='':
         with open(param, 'r') as f:
             params = yaml.safe_load(f)
@@ -41,7 +41,7 @@ def classify(taskid, param, out):
               help="Parameter file")
 @click.option("--out",
               help="Output file name")
-def univariate(ann, param, out):
+def univariate_analysis(ann, param, out):
     with open(param, 'r') as f:
         params = yaml.safe_load(f)
 
@@ -55,7 +55,7 @@ def univariate(ann, param, out):
     feat = gnps.feat
     meta = gnps.meta
 
-    annotated = pd.read_csv(annotated, sep='\t')
+    annotated = pd.read_csv(ann, sep='\t')
     df = univariate(annotated, tabgnps,
                     params, feat, meta)
 
