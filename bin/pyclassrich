@@ -106,12 +106,12 @@ def impact_plot(uni, param, cfield, nfield,
         df = univariate(annotated, tabgnps,
                         params, feat, meta)
 
-        if 'canopus' in params.keys():
-            print('Reading canopus...')
-            canopus_df = pd.read_csv(params['canopus'], sep='\t')
-            df = canopus(df, canopus_df,
-                         params['canopus_id'],
-                         params['canopus_class'])
+    if 'canopus' in params.keys():
+        print('Reading canopus...')
+        canopus_df = pd.read_csv(params['canopus'], sep='\t')
+        df = canopus(df, canopus_df,
+                     params['canopus_id'],
+                     params['canopus_class'])
 
     get_impact_plot(df, params, cfield=cfield, nfield=nfield,
                     method=method, scaling_factor=sca, top=top,
