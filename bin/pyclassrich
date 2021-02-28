@@ -94,7 +94,7 @@ def impact_plot(uni, param, cfield, nfield,
     else:
         taskid = params['nap_taskid']
         ndict = Proteosafe(taskid, 'NAP')
-        annotated = classify(ndict)
+        annotated = classify(taskid)
         ndict.get_nap()
         tabgnps = ndict.tabgnps
 
@@ -102,7 +102,7 @@ def impact_plot(uni, param, cfield, nfield,
         gnps.get_gnps()
         feat = gnps.feat
         meta = gnps.meta
-        annotated = classify(ndict)
+        annotated = classify(taskid)
         df = univariate(annotated, tabgnps,
                         params, feat, meta)
 
@@ -147,7 +147,7 @@ def ont_graph(uni, param, cfield, nfield,
     else:
         taskid = params['nap_taskid']
         ndict = Proteosafe(taskid, 'NAP')
-        annotated = classify(ndict)
+        annotated = classify(taskid)
         ndict.get_nap()
         tabgnps = ndict.tabgnps
 
@@ -155,7 +155,7 @@ def ont_graph(uni, param, cfield, nfield,
         gnps.get_gnps()
         feat = gnps.feat
         meta = gnps.meta
-        annotated = classify(ndict)
+        annotated = classify(taskid)
         df = univariate(annotated, tabgnps,
                         params, feat, meta)
 
