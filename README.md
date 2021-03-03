@@ -18,6 +18,7 @@ bash Miniconda2-latest-Linux-x86_64.sh
 
 ```
 conda env create -f environment.yml
+conda activate pyclassrich
 pip install git+https://github.com/computational-chemical-biology/pyClassRich.git
 ```
 
