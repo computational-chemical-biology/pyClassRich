@@ -1,0 +1,235 @@
+import pandas as pd
+import numpy as np
+import requests
+from bs4 import BeautifulSoup
+import json
+from rdkit import Chem
+from rdkit.Chem import rdMolDescriptors as rdMD
+from multiprocessing import Pool
+import itertools
+import time
+from pyclassrich.utils import get_db
+
+def inchikey2cid(inchikey):
+    r = requests.get('https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/%s/cids/JSON' % inchikey)
+    if r.status_code==200:
+        return r.json()['IdentifierList']['CID'][0]
+    else:
+        return ''
+
+def inchikey2pubchem(inchikey, type='SID'):
+    r = requests.get('https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/%s/%ss/JSON' % (inchikey, type.lower()))
+    if r.status_code==200:
+        return r.json()['IdentifierList'][type][0]
+    else:
+        return ''
+
+
+def sid2cid(sid):
+    r = requests.get('https://pubchem.ncbi.nlm.nih.gov/rest/pug/substance/sid/%s/cids/JSON' % sid)
+    if r.status_code==200:
+        return r.json()['InformationList']['Information']
+    else:
+        return ''
+
+def get_kegg_structures(chunksize=250):
+    kegg = pd.read_csv('http://rest.kegg.jp/conv/pubchem/compound', sep='\t', header=None)
+
+    print('Translating SID to CID...')
+    kegg[1] = kegg[1].str.replace('pubchem:', '')
+    queries = kegg[1].tolist()
+    sids = []
+    for i in range(0, len(queries), chunksize):
+        to_query = queries[i:i+chunksize]
+        sids.append(sid2cid(','.join(to_query)))
+
+    conv = []
+    for sid in sids:
+        conv.extend([[x['SID'], x['CID'][0]] if 'CID' in x.keys() else [x['SID'], ''] for x in sid])
+
+    conv = pd.DataFrame(conv)
+    kegg[1] = kegg[1].astype(np.int64)
+    kg2sid = pd.merge(kegg, conv, left_on=1, right_on=0)
+
+    print('Retrieving CanonicalSMILES...')
+    klist = []
+    for i in range(0, kg2sid.shape[0], chunksize):
+        to_save = kg2sid.loc[i:i+chunksize, '1_y'].tolist()
+        url = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/%s/property/CanonicalSMILES/JSON' % ','.join(map(str, to_save))
+        resp = requests.get(url)
+        klist.append(resp)
+
+    kconv = pd.concat([pd.DataFrame(x.json()['PropertyTable']['Properties']) for x in klist])
+    kconv.reset_index(inplace=True)
+    kegg = pd.merge(kg2sid, kconv, left_on='1_y', right_on='CID')
+    print('Obtaining InChI and Formula...')
+    form = []
+    inchi = []
+    inchikey = []
+    for x in kegg['CanonicalSMILES']:
+        try:
+            mol = Chem.MolFromSmiles(x)
+            form.append(rdMD.CalcMolFormula(mol))
+            ic = Chem.MolToInchi(mol)
+            inchi.append(ic)
+            inchikey.append(Chem.InchiToInchiKey(ic))
+        except:
+            form.append('')
+            inchi.append('')
+            inchikey.append('')
+
+    kegg['Formula'] = form
+    kegg['InChI'] = inchi
+    kegg['InChIKey'] = inchikey
+    kegg.drop(['1_x', '0_y', 'index', '1_y'], axis=1, inplace=True)
+    kegg.columns = ['SID', 'KEGGID', 'CID', 'CanonicalSMILES', 'Formula', 'InChI', 'InChIKey']
+
+    return kegg
+
+def get_organism_table():
+    url = 'https://www.genome.jp/kegg/catalog/org_list.html'
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'lxml')
+    table = soup.find_all('table')[1]
+
+    table_list = []
+
+    row_marker = 0
+    for row in table.find_all('tr'):
+        columns = row.find_all('td')
+        new_table = []
+        for column in columns:
+            new_table.append(column.get_text())
+        new_table = (6-len(new_table))*['']+new_table
+        table_list.append(new_table)
+
+    eukaryotes = pd.DataFrame(table_list)
+    c1b = ''
+    c2b = ''
+    c3b = ''
+    for i in eukaryotes.index:
+        c1 = eukaryotes.loc[i, 0]
+        if c1=='':
+            eukaryotes.loc[i, 0] = c1b
+        else:
+            c1b = eukaryotes.loc[i, 0]
+        c2 = eukaryotes.loc[i, 1]
+        if c2=='':
+            eukaryotes.loc[i, 1] = c2b
+        else:
+            c2b = eukaryotes.loc[i, 1]
+        c3 = eukaryotes.loc[i, 2]
+        if c3=='':
+            eukaryotes.loc[i, 2] = c3b
+        else:
+            c3b = eukaryotes.loc[i, 2]
+
+    eukaryotes.drop(0, inplace=True)
+    eukaryotes[5] = 'eukaryotes'
+
+    table = soup.find_all('table')[2]
+
+    table_list = []
+
+    row_marker = 0
+    for row in table.find_all('tr'):
+        columns = row.find_all('td')
+        new_table = []
+        for column in columns:
+            new_table.append(column.get_text())
+        new_table = (7-len(new_table))*['']+new_table
+        table_list.append(new_table)
+
+    prokaryotes = pd.DataFrame(table_list)
+    c1b = ''
+    c2b = ''
+    c3b = ''
+    for i in prokaryotes.index:
+        c1 = prokaryotes.loc[i, 0]
+        if c1=='':
+            prokaryotes.loc[i, 0] = c1b
+        else:
+            c1b = prokaryotes.loc[i, 0]
+        c2 = prokaryotes.loc[i, 1]
+        if c2=='':
+            prokaryotes.loc[i, 1] = c2b
+        else:
+            c2b = prokaryotes.loc[i, 1]
+        c3 = prokaryotes.loc[i, 2]
+        if c3=='':
+            prokaryotes.loc[i, 2] = c3b
+        else:
+            c3b = prokaryotes.loc[i, 2]
+
+    prokaryotes.drop(0, inplace=True)
+    prokaryotes.drop(6, axis=1, inplace=True)
+    prokaryotes[5] = 'prokaryotes'
+
+    organisms = pd.concat([eukaryotes, prokaryotes]).reset_index(drop=True)
+    return organisms
+
+def pth2cpd(t):
+    p, org = t
+    p = p.replace(org, 'map')
+    try:
+        cpd = pd.read_csv('http://rest.kegg.jp/link/cpd/%s' % p, sep='\t', header=None)
+        return cpd[1].tolist()
+    except:
+        return []
+
+def org2cpd(org):
+    pth = pd.read_csv('http://rest.kegg.jp/link/%s/pathway' % org, sep='\t', header=None)
+    pth = list(set(pth[0].tolist()))
+    z = zip(pth, len(pth)*[org])
+    with Pool() as p:
+        cpd_list = p.map(pth2cpd, z)
+
+    return list(itertools.chain.from_iterable(cpd_list))
+
+if __name__ == '__main__':
+    print('Retrieving organism table...')
+    orgs = get_organism_table()
+    orgs.to_csv('kegg_org.tsv', sep='\t', index=None)
+
+    print('Obtaining compounds by organism, this step is very long...')
+    org_dict = {}
+    for o in orgs[3]:
+        time.sleep(40)
+        try:
+            org_dict[o] = org2cpd(o)
+        except:
+            continue
+
+    with open('kegg_org.json', 'w+') as f:
+        json.dump(org_dict, f)
+
+    print('Retrieving structure information...')
+    kegg = get_kegg_structures()
+
+    for k,v in org_dict.items():
+        tmp = kegg.loc[kegg.KEGGID.isin(v), 'InChIKey'].unique().tolist()
+        org_dict[k] = tmp
+
+    with open('kegg_inchikey_org.json', 'w+') as f:
+        json.dump(org_dict, f)
+
+    print('Retrieving chemical class information...')
+    db = get_db('HMDB,GNPS,DNP,CHEBI,SUPNAT,DRUGBANK,MarinLit,FooDB,NPAtlas')
+    kegg['InChIKey1'] = kegg.InChIKey.apply(lambda a: a.split('-')[0])
+
+    for k,v in org_dict.items():
+        d = {}
+        tmp = kegg.loc[kegg.InChIKey.isin(v), 'InChIKey1'].unique().tolist()
+        tmp2 = db.loc[db.InChIKey1.isin(tmp), ['InChIKey1', 'superclass_name',
+                                               'class_name',  'subclass_name']]
+        tmp2 = tmp2[~db.InChIKey1.duplicated()]
+        d['InChIKey1'] = tmp2['InChIKey1'].tolist()
+        d['superclass_name'] = tmp2['superclass_name'].tolist()
+        d['class_name'] = tmp2['class_name'].tolist()
+        d['subclass_name'] = tmp2['subclass_name'].tolist()
+
+        org_dict[k] = d
+
+    with open('kegg_classes_org.json', 'w+') as f:
+        json.dump(org_dict, f)
+

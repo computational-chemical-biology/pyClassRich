@@ -1,6 +1,5 @@
 # pyClassRich 
 
-## Installation
 <p align="center">
   <img src="https://github.com/computational-chemical-biology/pyClassRich/blob/master/img/" alt="logo"/>
 </p>
