@@ -1,8 +1,9 @@
 name: pyclassrich
 channels:
   - qiime2/label/r2020.11
-  - conda-forge
+  - rdkit
   - bioconda
+  - conda-forge
   - defaults
 dependencies:
   - _libgcc_mutex=0.1=conda_forge
@@ -43,13 +44,14 @@ dependencies:
   - blast=2.10.1=pl526he19e7b1_3
   - bleach=3.2.1=pyh9f0ad1d_0
   - bokeh=2.2.3=py36h5fab9bb_0
+  - boost=1.63.0=py36h415b752_1
   - boost-cpp=1.70.0=h7b93d67_3
   - bowtie2=2.4.2=py36h5202f60_1
   - brotlipy=0.7.0=py36h8f6f2f9_1001
   - bwidget=1.9.14=ha770c72_0
   - bzip2=1.0.8=h7f98852_4
   - c-ares=1.17.1=h36c2ea0_0
-  - ca-certificates=2020.12.5=ha878542_0
+  - ca-certificates=2021.1.19=h06a4308_1
   - cachecontrol=0.12.6=py_0
   - cairo=1.16.0=h9f066cc_1006
   - certifi=2020.12.5=py36h5fab9bb_1
@@ -173,7 +175,7 @@ dependencies:
   - numpy=1.19.4=py36h2aa4a07_2
   - olefile=0.46=pyh9f0ad1d_1
   - openjdk=11.0.8=hacce0ff_0
-  - openssl=1.1.1h=h516909a_0
+  - openssl=1.1.1j=h27cfd23_0
   - packaging=20.7=pyhd3deb0d_0
   - pandas=1.1.5=py36h284efc9_0
   - pandoc=2.11.2=h36c2ea0_0
@@ -373,6 +375,7 @@ dependencies:
   - r-withr=2.3.0=r40h6115d3f_0
   - r-zeallot=0.1.0=r40h6115d3f_1002
   - raxml=8.2.12=h516909a_2
+  - rdkit=2017.09.1=py36_1
   - readline=8.0=he28a2e2_2
   - requests=2.25.0=pyhd3deb0d_0
   - samtools=1.11=h6270b1f_0
@@ -433,4 +436,25 @@ dependencies:
   - zipp=3.4.0=py_0
   - zlib=1.2.11=h516909a_1010
   - zstd=1.4.5=h6597ccf_2
-
+  - pip:
+    - appdirs==1.4.4
+    - beautifulsoup4==4.9.3
+    - bioservices==1.7.11
+    - colorama==0.4.4
+    - colorlog==4.7.2
+    - easydev==0.11.0
+    - gevent==21.1.2
+    - greenlet==1.0.0
+    - grequests==0.6.0
+    - gseapy==0.10.4
+    - lxml==4.6.2
+    - obonet==0.2.6
+    - pyteomics==4.4.1
+    - requests-cache==0.5.2
+    - soupsieve==2.2
+    - sqlalchemy==1.4.1
+    - suds-jurko==0.6
+    - wrapt==1.12.1
+    - xmltodict==0.12.0
+    - zope-event==4.5.0
+    - zope-interface==5.2.0

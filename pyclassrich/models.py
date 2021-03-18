@@ -301,7 +301,7 @@ def label_point(x, y, val, ax):
 
 def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
                 nfield='CompoundName', scaling_factor=20,
-                outdir='', filename='', fig_title=''):
+                top=0, outdir='', filename='', fig_title=''):
     """ Impact plot
     Parameters
     ----------
@@ -353,13 +353,18 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
                                        vmax=max(list(cmap.values()))),
                         cmap=ListedColormap(clist))
 
-
+    if top!=0:
+        clustdf_alt_impact = clustdf_alt_impact.sort_values('pvalues').head(top)
     #s = [scaling_factor*n for n in clustdf_alt_impact["logPval"]]
     s = [scaling_factor*n for n in clustdf_alt_impact["csize"]]
 
     fig, ax = mpl.pyplot.subplots()
     xlogp = clustdf_alt_impact["xlogp"]
     logPval = clustdf_alt_impact["logPval"]
+    im = ax.scatter(x="xlogp", y="logPval",
+                    color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
+                           clustdf_alt_impact.index],
+               data=clustdf_alt_impact)
     ax.scatter(x="xlogp", y="logPval",
                s=s,
                color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
@@ -377,6 +382,7 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
     ax.set_xlabel(" median XlogP of clusters ")
     ax.set_ylabel(" -log (pvalue) ")
     ax.set_title(fig_title)
+    fig.colorbar(sm, ax=ax)
 
     if outdir!='':
         with PdfPages(os.path.join(outdir, filename)) as pdf:
@@ -384,14 +390,6 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
             plt.close()
     else:
         plt.show()
-
-    '''
-    ax = sns.scatterplot(x="xlogp", y="logPval",
-                         hue="altratio", size="csize",
-                         sizes=(100, 1000), hue_norm=(0, 7),
-                         legend=False, data=clustdf_alt_impact)
-
-    '''
 
 def get_impact_plot(ctabsel, params, cfield, nfield, method,
                     scaling_factor, hierarchy, outdir,
@@ -448,14 +446,12 @@ def get_impact_plot(ctabsel, params, cfield, nfield, method,
                                         params=params)
             chemrich.to_csv(os.path.join(outdir, cfilename),
                             sep='\t', index=None)
-            if top!=0:
-                chemrich = chemrich.sort_values(['pvalues']).iloc[:top,:]
             fig_title = '%s vs Average' % prefix
             filename='impact_plot_%s_%s_%s.pdf' % (method, prefix, hierarchy)
             impact_plot(chemrich, class_table, cfield=cfield,
                         nfield=nfield, scaling_factor=scaling_factor,
                         outdir=outdir, filename=filename,
-                        fig_title=fig_title)
+                        fig_title=fig_title, top=top)
     else:
         # Are compound names taken from GNPS?
         class_table = ctabsel.loc[ctabsel['fchange']!=0, ["Identifier", "pval", "fchange", hierarchy, "InChI"]]
@@ -468,8 +464,6 @@ def get_impact_plot(ctabsel, params, cfield, nfield, method,
         chemrich = class_enrichment(class_table, ctabsel, cfield=cfield,
                                         nfield=nfield, method=method,
                                         params=params)
-        if top!=0:
-            chemrich = chemrich.sort_values(['pvalues']).iloc[:top,:]
         chemrich.to_csv(os.path.join(outdir, 'chemrich_%s.tsv' % hierarchy),
                         sep='\t', index=None)
         filename='impact_plot_%s_%s.pdf' % (method, hierarchy)
@@ -477,7 +471,8 @@ def get_impact_plot(ctabsel, params, cfield, nfield, method,
                     nfield=nfield, outdir=outdir,
                     scaling_factor=scaling_factor,
                     filename=filename,
-                    fig_title=' vs '.join(cls.split(',')))
+                    fig_title=' vs '.join(cls.split(',')),
+                    top=top)
 
 # To be applied 
 def plot_classes_by_group(ctabsel, cfield, outdir,
