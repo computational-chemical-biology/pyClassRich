@@ -361,10 +361,6 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
     fig, ax = mpl.pyplot.subplots()
     xlogp = clustdf_alt_impact["xlogp"]
     logPval = clustdf_alt_impact["logPval"]
-    im = ax.scatter(x="xlogp", y="logPval",
-                    color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
-                           clustdf_alt_impact.index],
-               data=clustdf_alt_impact)
     ax.scatter(x="xlogp", y="logPval",
                s=s,
                color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
@@ -521,7 +517,7 @@ def plot_classes_by_group(ctabsel, cfield, outdir,
 
 
 
-def ont_graph(clusterdf_all, out_file='', show=False):
+def ont_graph(clusterdf_all, out_file='', scaling_factor=20, show=False):
     clfy = Chemont()
     id_to_name = clfy.id_to_name
     nms = pd.DataFrame(id_to_name, index=[0]).T.reset_index()
@@ -544,7 +540,7 @@ def ont_graph(clusterdf_all, out_file='', show=False):
                                        vmax=max(list(cmap.values()))),
                         cmap=ListedColormap(clist))
 
-    s = [20*n for n in clustdf_alt_impact["logPval"]]
+    s = [scaling_factor*n for n in clustdf_alt_impact["csize"]]
     c = [sm.to_rgba(cmap[obsv_id]) for obsv_id in
            clustdf_alt_impact.index]
 
@@ -583,13 +579,13 @@ def ont_graph(clusterdf_all, out_file='', show=False):
         c = {clustdf_alt_impact.loc[obsv_id,0]:mcolors.to_hex(sm.to_rgba(cmap[obsv_id]))
              for obsv_id in clustdf_alt_impact.index}
         nx.set_node_attributes(G, c, 'color')
-        s = {clustdf_alt_impact.loc[i,0]:20*clustdf_alt_impact.loc[i,"logPval"]
+        s = {clustdf_alt_impact.loc[i,0]:scaling_factor*clustdf_alt_impact.loc[i,"csize"]
              for i in clustdf_alt_impact.index}
         nx.set_node_attributes(G, s, 'size')
-        nx.write_gml(G, out_file)
+        nx.write_graphml(G, out_file)
 
 def get_ont_graph(ctabsel, params, cfield, nfield, method,
-                  outdir, scaling_factor=10, **kwargs):
+                  outdir, **kwargs):
     """ Calculates chemical enrichment and generates plots
     Parameters
     ----------
@@ -664,7 +660,7 @@ def get_ont_graph(ctabsel, params, cfield, nfield, method,
                                             params=params)
             chemlist.append(chemrich)
 
-        filename = 'ont_graph_%s.gml' % method
+        filename = 'ont_graph_%s.graphml' % method
         filename = os.path.join(outdir, filename)
         clusterdf_all = pd.concat(chemlist).reset_index(drop=True)
         ont_graph(clusterdf_all, out_file=filename, **kwargs)
