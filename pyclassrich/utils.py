@@ -12,6 +12,10 @@ from collections import defaultdict
 #from scripts.classwf.classyfire import *
 from pyclassrich.gnps import Proteosafe
 
+def save_sqlite(table_name, df):
+    engine = sqlalchemy.create_engine('sqlite:///%s.db' % table_name, echo=False)
+    df.to_sql(table_name, index=None, con=engine)
+
 def load_sqlite(db_name):
     table_name = "compound"
 
@@ -46,7 +50,8 @@ def get_db(ndb):
         'DRUGBANK' : "drugdb",
         'MarinLit' : "marinlit",
         'FooDB' : "fooddb",
-        'NPAtlas' : "npatlas"
+        'NPAtlas' : "npatlas",
+        "COCONUT": "coconut"
     }
     local_path = f'{os.path.expanduser("~")}/.local/pyclassrich'
     if not os.path.exists(local_path):
