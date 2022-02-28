@@ -22,6 +22,8 @@ import matplotlib.colors as mcolors
 import matplotlib as mpl
 plt.style.use('ggplot')
 #mpl.rcParams['lines.markersize'] = 200
+import warnings
+warnings.simplefilter(action='ignore')
 
 import networkx as nx
 import obonet
@@ -152,7 +154,7 @@ def apply_gsea(mol_set, params, annotated, feat=None,
 
 def kstest(df, clusterid, cfield='ChemRICHClusters', pfield='pvalue',
           alpha=0.05):
-    clmember = np.where(df[cfield]==clusterid)[0]
+    clmember = df[cfield]==clusterid
     pvalmembers = df.loc[clmember, pfield]
     if sum(pvalmembers<alpha) > 1:
         pres = stats.kstest(pvalmembers, 'uniform', alternative = 'greater')

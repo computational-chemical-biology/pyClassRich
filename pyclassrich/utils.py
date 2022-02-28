@@ -2,7 +2,7 @@ import os, re, shutil, sys, datetime, time
 import xmltodict, json, io, bz2
 import subprocess, requests, ftplib
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore')
 import pandas as pd
 import sqlalchemy
 import numpy as np
@@ -137,7 +137,7 @@ def classify(taskid):
             break
         if tmp.shape[0] > 3:
             if 'fusion' in tmp.columns:
-                tmp['fusion'] = tmp['fusion'].astype(float)
+                tmp.loc[:,'fusion'] = tmp['fusion'].astype(float)
                 tmp.sort_values(['fusion'], ascending=False, inplace=True)
                 g = tmp[tmp['fusion']==1]['MCSS'].tolist()[0]
                 sel = tmp[tmp['MCSS']==g][['Identifier', 'fusion']]
@@ -145,7 +145,7 @@ def classify(taskid):
                 sel.loc[:,'Ncandidates'] = tmp.shape[0]
                 sel.rename(columns={'fusion':'Score'}, inplace=True)
             elif 'fusion2' in tmp.columns:
-                tmp['fusion2'] = tmp['fusion2'].astype(float)
+                tmp.loc[:,'fusion2'] = tmp['fusion2'].astype(float)
                 tmp.sort_values(['fusion2'], ascending=False, inplace=True)
                 g = tmp[tmp['fusion2']==1]['MCSS'].tolist()[0]
                 sel = tmp[tmp['MCSS']==g][['Identifier', 'fusion2']]
@@ -155,7 +155,7 @@ def classify(taskid):
             elif 'Score' in tmp.columns:
                 if not (tmp['Score']==1).any():
                     continue
-                tmp['Score'] = tmp['Score'].astype(float)
+                tmp.loc[:,'Score'] = tmp['Score'].astype(float)
                 tmp.sort_values(['Score'], ascending=False, inplace=True)
                 g = tmp[tmp['Score']==1]['MCSS'].tolist()[0]
                 sel = tmp[tmp['MCSS']==g][['Identifier', 'Score']]

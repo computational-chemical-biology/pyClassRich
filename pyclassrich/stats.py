@@ -48,7 +48,7 @@ def multi_class(data, cn, fnames, method):
     return pd.DataFrame(vstats)
 
 def univariate(annotation, tabgnps, params,
-               feat, meta, nap_taskid='', volcano=True,
+               feat, meta, nap_taskid='', volcano=False,
                input_dir='', filename=''):
     """ Performs the selected univariate test in all features.
     Parameters
@@ -286,6 +286,7 @@ def univariate(annotation, tabgnps, params,
         doutput = os.path.join(input_dir, filename)
         ctabsel.to_csv(doutput,
                        sep='\t', index=None)
+    ctabsel.reset_index(drop=True, inplace=True)
     return ctabsel
 
 nonphyl_metrics = {'braycurtis', 'canberra', 'chebyshev', 'cityblock', 'correlation', 'cosine',
