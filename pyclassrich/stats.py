@@ -9,11 +9,11 @@ import os
 import yaml
 import json
 
-import qiime2
-from qiime2 import Artifact
+#import qiime2
+#from qiime2 import Artifact
 import pandas as pd
-from qiime2.plugins import metadata, feature_table, diversity, emperor
-from q2_emperor import plot, procrustes_plot, biplot, generic_plot
+#from qiime2.plugins import metadata, feature_table, diversity, emperor
+#from q2_emperor import plot, procrustes_plot, biplot, generic_plot
 from scipy.spatial.distance import squareform, pdist
 import os
 import sys

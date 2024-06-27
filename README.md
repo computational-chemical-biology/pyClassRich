@@ -21,6 +21,21 @@ conda activate pyclassrich
 pip install git+https://github.com/computational-chemical-biology/pyClassRich.git
 ```
 
+### Alternative installtion 
+
+```
+conda env create -f environment_alt.yml
+conda activate pyclassrich
+```
+
+Download the package and inside the package directory do
+
+```
+python setup.py install
+
+```
+
+
 ### License
 
 This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details
