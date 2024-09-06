@@ -51,7 +51,7 @@ def get_db(ndb):
         'MarinLit' : "marinlit",
         'FooDB' : "fooddb",
         'NPAtlas' : "npatlas",
-        "COCONUT": "coconut"
+        "COCONUT": "COCONUT"
     }
     local_path = f'{os.path.expanduser("~")}/.local/pyclassrich'
     if not os.path.exists(local_path):
@@ -101,8 +101,7 @@ def classify(taskid):
         in decreasing order of confidence
     Parameters
     ----------
-    proteosafe : Proteosafe
-       Proteosafe object
+    taskid : uid for NAP workflow
     Returns
     -------
     annotated : pd.DataFrame
@@ -219,6 +218,79 @@ def classify(taskid):
         inchi_replace = pd.merge(pd.DataFrame(inchi), db[~db['InChI'].duplicated()], how='left').fillna('')
         ftabgnps.loc[inchi.index, cnames] = inchi_replace.loc[:, cnames]
     return ftabgnps
+
+def classifyChemWalker(chemwalker_results, ndb, tabgnps):
+    """ Classifies structural annotations from GNPS/ChemWalker
+        in decreasing order of confidence
+    Parameters
+    ----------
+    chemwalker_results: ChemWalker tsv result
+    ndb: name of database used on ChemWalker search
+    tabgnps: DataFrame obtained from gnps
+    Returns
+    -------
+    annotated : pd.DataFrame
+       fully annotated GNPS/ChemWalker table
+    """
+    seltab = pd.read_csv(chemwalker_results)
+    seltab = seltab.groupby('cluster index').first()
+    seltab.reset_index(inplace=True)
+    seltab = seltab[['cluster index', 'Identifier', 'chw_prob']]
+    seltab = seltab.rename(columns={'cluster index': 'cluster.index', 'chw_prob':'Score'})
+
+    db = get_db(ndb)
+
+    seltab = pd.merge(seltab, db[['Identifier', 'InChI', 'kingdom_name',
+                                  'superclass_name', 'class_name', 'subclass_name',
+                                  'superclass_id', 'class_id', 'subclass_id']],
+                      left_on='Identifier', right_on='Identifier')
+    tabgnps = tabgnps.rename(columns={'cluster index': 'cluster.index'})
+
+    ftabgnps = pd.merge(tabgnps[['cluster.index', 'SpectrumID', 'Smiles', 'INCHI']], seltab,
+                        left_on='cluster.index', right_on='cluster.index', how='left')
+
+    ftabgnps['conflict'] = ''
+    ftabgnps['ginchikey'] = ''
+    ftabgnps.fillna('', inplace=True)
+    for j in range(ftabgnps.shape[0]):
+        smi = ftabgnps.loc[j, 'Smiles']
+        if type(smi)!=float and smi!='':
+            mol = Chem.MolFromSmiles(smi)
+            sinchi =  Chem.MolToInchi(mol)
+            skey = Chem.InchiToInchiKey(sinchi)
+            ftabgnps.loc[j, 'INCHI'] = sinchi
+        else:
+            skey = None
+        inchi = ftabgnps.loc[j, 'INCHI']
+        if type(inchi)!=float:
+            sinchi = Chem.InchiToInchiKey(inchi)
+        if type(smi)!=float and type(inchi)!=float and sinchi!=None and skey!=None:
+            skey1 = skey.split('-')[0]
+            sinchi1 = sinchi.split('-')[0]
+            if skey1==sinchi1:
+                ftabgnps.loc[j, 'ginchikey'] = skey
+                ftabgnps.loc[j, 'conflict'] = 'no'
+            else:
+                ftabgnps.loc[j, 'ginchikey'] = sinchi
+                ftabgnps.loc[j, 'conflict'] = 'yes'
+        elif type(smi)!=float and skey!=None:
+            ftabgnps.loc[j, 'ginchikey'] = skey
+        elif type(inchi)!=float and sinchi!=None:
+            ftabgnps.loc[j, 'ginchikey'] = sinchi
+        else:
+            continue
+
+    ftabgnps.loc[ftabgnps['INCHI']!='', 'InChI'] = ftabgnps.loc[ftabgnps['INCHI']!='', 'INCHI']
+    ftabgnps['InchiKey'] = [Chem.InchiToInchiKey(x) for x in ftabgnps['InChI']]
+
+    inchi = ftabgnps.loc[(ftabgnps['kingdom_name']=='') & (ftabgnps['InChI']!=''), 'InChI']
+    if len(inchi):
+        cnames = ['superclass_name', 'class_name', 'subclass_name',
+                  'superclass_id', 'class_id', 'subclass_id']
+        inchi_replace = pd.merge(pd.DataFrame(inchi), db[~db['InChI'].duplicated()], how='left').fillna('')
+        ftabgnps.loc[inchi.index, cnames] = inchi_replace.loc[:, cnames]
+    return ftabgnps
+
 
 def getLibra_id_link(i, tab):
     burl = 'https://gnps.ucsd.edu/ProteoSAFe/result.jsp?task='
