@@ -300,10 +300,9 @@ def label_point(x, y, val, ax):
     for i, point in a.iterrows():
         ax.text(point['x']+.02, point['y'], str(point['val']), fontsize=9)
 
-
 def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
-                nfield='CompoundName', scaling_factor=20,
-                top=0, outdir='', filename='', fig_title=''):
+                nfield='CompoundName', scaling_factor=20, top=0,
+                xshift=0.3, yshift=0.3, outdir='', filename='', fig_title=''):
     """ Impact plot
     Parameters
     ----------
@@ -373,9 +372,15 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
                 clustdf_alt_impact["name"],
                 plt.gca())
 
+    ulogp = xlogp.unique()
+    ulogp.sort()
+    if len(ulogp)>1:
+      onelogp = ulogp[1]
+    else:
+      onelogp = ulogp[0]
     xmin, xmax, ymin, ymax = ax.axis()
-    ax.axis([min(xlogp.min()-0.3*xlogp.min(), xmin), xlogp.max()+0.3*xlogp.max(),
-              min([logPval.min()-0.3*logPval.min(), ymin]), logPval.max()+0.3*logPval.max()])
+    ax.axis([min(xlogp.min()-xshift*onelogp, xmin), xlogp.max()+xshift*onelogp,
+              min([logPval.min()-yshift*logPval.min(), ymin]), logPval.max()+yshift*logPval.max()])
 
     ax.set_xlabel(" median XlogP of clusters ")
     ax.set_ylabel(" -log (pvalue) ")
@@ -388,6 +393,7 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
             plt.close()
     else:
         plt.show()
+
 
 def get_impact_plot(ctabsel, params, cfield, nfield, method,
                     scaling_factor, hierarchy, outdir,
