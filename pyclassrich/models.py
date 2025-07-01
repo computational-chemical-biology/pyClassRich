@@ -288,12 +288,16 @@ def class_enrichment(chemrich, annotated=None, cfield='ChemRICHClusters',
         chemrich['xlogp'] = [Descriptors.MolLogP(m) if m!=None else 0                                                                                                                             for m in mols]
         xlogp = []
         for x in clusterdf['name']:
-            logp = np.median(chemrich.loc[chemrich[cfield]==x, 'xlogp'])
+            alllogp = chemrich.loc[chemrich[cfield]==x, 'xlogp']
+            alllogp = alllogp[alllogp!=0]
+            if len(alllogp):
+                logp = np.median(alllogp)
+            else:
+                logp = 0
             xlogp.append(logp)
 
         clusterdf['xlogp'] = xlogp
     return clusterdf
-
 
 def label_point(x, y, val, ax):
     a = pd.concat({'x': x, 'y': y, 'val': val}, axis=1)
@@ -302,7 +306,8 @@ def label_point(x, y, val, ax):
 
 def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
                 nfield='CompoundName', scaling_factor=20, top=0,
-                xshift=0.3, yshift=0.3, outdir='', filename='', fig_title=''):
+                xshift=0.3, yshift=0.3, outdir='', filename='',
+                use_order=False, fig_title=''):
     """ Impact plot
     Parameters
     ----------
@@ -362,28 +367,45 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
     fig, ax = mpl.pyplot.subplots()
     xlogp = clustdf_alt_impact["xlogp"]
     logPval = clustdf_alt_impact["logPval"]
-    ax.scatter(x="xlogp", y="logPval",
-               s=s,
-               color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
-                      clustdf_alt_impact.index],
-               data=clustdf_alt_impact)
+    if not use_order:
+      ax.scatter(x="xlogp", y="logPval",
+                s=s,
+                color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
+                        clustdf_alt_impact.index],
+                data=clustdf_alt_impact)
 
-    label_point(clustdf_alt_impact["xlogp"], clustdf_alt_impact["logPval"],
-                clustdf_alt_impact["name"],
-                plt.gca())
+      label_point(clustdf_alt_impact["xlogp"], clustdf_alt_impact["logPval"],
+                  clustdf_alt_impact["name"],
+                  plt.gca())
 
-    ulogp = xlogp.unique()
-    ulogp.sort()
-    if len(ulogp)>1:
-      onelogp = ulogp[1]
+      ulogp = xlogp.unique()
+      ulogp.sort()
+      if len(ulogp)>1:
+        onelogp = ulogp[1]
+      else:
+        onelogp = ulogp[0]
+      xmin, xmax, ymin, ymax = ax.axis()
+      ax.axis([min(xlogp.min()-xshift*onelogp, xmin), xlogp.max()+xshift*onelogp,
+                min([logPval.min()-yshift*logPval.min(), ymin]), logPval.max()+yshift*logPval.max()])
+      ax.set_xlabel(" median XlogP of clusters ")
+      ax.set_ylabel(" -log (pvalue) ")
     else:
-      onelogp = ulogp[0]
-    xmin, xmax, ymin, ymax = ax.axis()
-    ax.axis([min(xlogp.min()-xshift*onelogp, xmin), xlogp.max()+xshift*onelogp,
-              min([logPval.min()-yshift*logPval.min(), ymin]), logPval.max()+yshift*logPval.max()])
+      clustdf_alt_impact['ord'] = range(clustdf_alt_impact.shape[0])
+      ax.scatter(x="ord", y="logPval",
+                s=s,
+                color=[sm.to_rgba(cmap[obsv_id]) for obsv_id in
+                        clustdf_alt_impact.index],
+                data=clustdf_alt_impact)
 
-    ax.set_xlabel(" median XlogP of clusters ")
-    ax.set_ylabel(" -log (pvalue) ")
+      label_point(clustdf_alt_impact["ord"], clustdf_alt_impact["logPval"],
+                  clustdf_alt_impact["name"],
+                  plt.gca())
+      xmin, xmax, ymin, ymax = ax.axis()
+      ax.axis([min(xmin-xshift, xmin), xmax+xshift,
+                min([logPval.min()-yshift*logPval.min(), ymin]), logPval.max()+yshift*logPval.max()])
+      ax.set_xlabel(" Significance order ")
+      ax.set_ylabel(" -log (pvalue) ")
+
     ax.set_title(fig_title)
     fig.colorbar(sm, ax=ax)
 
@@ -393,7 +415,6 @@ def impact_plot(clusterdf, chemrich, cfield='ChemRICHClusters',
             plt.close()
     else:
         plt.show()
-
 
 def get_impact_plot(ctabsel, params, cfield, nfield, method,
                     scaling_factor, hierarchy, outdir,
