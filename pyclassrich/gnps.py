@@ -1,17 +1,43 @@
 import pandas as pd
 import requests
 import io
+import re
 import xmltodict
 import json
 from pyteomics import mgf
 
+def replaceCharge(url_to_spectra):
+    filedata = re.sub('CHARGE=.+', 'CHARGE=0', requests.get(url_to_spectra).text)
+    return filedata
+
 def read_spectra(url_to_spectra):
     spectra = []
-    with mgf.MGF(io.StringIO(requests.get(url_to_spectra).text)) as reader:
+    filedata = replaceCharge(url_to_spectra)
+    with mgf.MGF(io.StringIO(filedata)) as reader:
         for spectrum in reader:
             spectra.append(spectrum)
 
     return spectra
+
+def read_table(url_to_table, sep='\t'):
+    """ Reads a GNPS2 result file.
+    Parameters
+    ----------
+    url_to_table : str
+       url of the table
+    sep : str
+       field separator
+    Returns
+    -------
+    table : pandas.DataFrame or None
+        None when GNPS2 answers with an HTML page, i.e. when the file is
+        missing or the endpoint requires a login.
+    """
+    response = requests.get(url_to_table)
+    text = response.text
+    if response.status_code != 200 or not text.strip() or text.lstrip().startswith('<'):
+        return None
+    return pd.read_csv(io.StringIO(text), sep=sep)
 
 class Proteosafe:
     def __init__(self, taskid, workflow):
@@ -109,6 +135,61 @@ class Proteosafe:
             self.spectra = read_spectra(url_to_spectra)
             self.feat = pd.read_csv(io.StringIO(requests.get(url_to_features).text))
             self.meta = pd.read_csv(io.StringIO(requests.get(url_to_metadata).text), sep='\t')
+        elif workflow=='EB':
+            # EB files are served through the same resultfile mapping used by
+            # FBMN-gnps2, the task relative paths are the ones published by
+            # https://gnps2.org/filebrowser/files/nf_tasks/<taskid>/<path>
+            base_url = 'https://gnps2.org/resultfile?task=%s&file=' % (taskid[0])
+            url_to_features = base_url + 'nf_output/feature_finding/feature_finding_results/aligned_features.csv'
+            url_to_db = base_url + 'nf_output/feature_analog_library_search/merged_feature_analog_library_search_results.tsv'
+            url_to_spectra = base_url + 'nf_output/feature_finding/aligned_features_filled.mgf'
+            url_to_edges = base_url + 'nf_output/networking/filtered_pairs.tsv'
+            # the uploaded metadata table is not released by resultfile, the
+            # merged copy published by the workflow is used as fallback
+            url_to_metadata = [base_url + 'metadata_file/metadata_final_validada_completa.tsv',
+                               base_url + 'nf_output/metadata/merged_metadata.tsv']
+            self.feat = pd.read_csv(io.StringIO(requests.get(url_to_features).text))
+            self.dbmatch = pd.read_csv(io.StringIO(requests.get(url_to_db).text), sep='\t')
+            # analog library search table is aligned to the feature table
+            self.dbmatch = self.dbmatch.rename(columns={'query_scan': '#Scan#',
+                                                        'SMILES': 'Smiles',
+                                                        'INCHIAUX': 'InChIKey',
+                                                        'SPECTRUMID': 'SpectrumID',
+                                                        'NAME': 'Compound_Name'})
+            # EB does not report ClassyFire ranks, empty ranks keep the
+            # annotation table shaped as the one built for FBMN-gnps2
+            for rank in ['superclass', 'class', 'subclass']:
+                self.dbmatch[rank] = ''
+            self.dbmatch['INCHI'] = self.dbmatch['INCHI'].fillna('').str.strip('"')
+            self.dbmatch['INCHI'] = ['InChI=' + x if x and not x.startswith('InChI=') else x
+                                     for x in self.dbmatch.INCHI.to_list()]
+            self.dbmatch['Smiles'] = self.dbmatch['Smiles'].fillna('')
+            self.dbmatch['InChIKey'] = self.dbmatch['InChIKey'].fillna('')
+            self.net = pd.read_csv(io.StringIO(requests.get(url_to_edges).text), sep='\t')
+            self.spectra = read_spectra(url_to_spectra)
+            self.meta = None
+            for url_to_metadata_file in url_to_metadata:
+                self.meta = read_table(url_to_metadata_file)
+                if self.meta is not None:
+                    break
+            if self.meta is None:
+                raise Exception("Unable to retrieve the EB metadata table")
+            # feature table plays the role of the node attribute table
+            self.gnps = self.feat[['row ID', 'row m/z', 'row retention time',
+                                   'parent_mass']].copy()
+            self.gnps.rename(columns={'row ID': 'cluster index',
+                                      'row m/z': 'm/z',
+                                      'row retention time': 'RTMean',
+                                      'parent_mass': 'parent mass'}, inplace=True)
+            component = pd.concat([self.net[['CLUSTERID1', 'ComponentIndex']].rename(
+                                      columns={'CLUSTERID1': 'cluster index'}),
+                                   self.net[['CLUSTERID2', 'ComponentIndex']].rename(
+                                      columns={'CLUSTERID2': 'cluster index'})])
+            component = component.drop_duplicates('cluster index')
+            self.gnps = pd.merge(self.gnps, component, on='cluster index', how='left')
+            # features without edges are singletons
+            self.gnps['component'] = self.gnps['ComponentIndex'].fillna(-1).astype(int)
+            self.gnps.drop(['ComponentIndex'], axis=1, inplace=True)
         else:
             raise Exception("Unknown workflow type")
 
@@ -186,7 +267,7 @@ class Proteosafe:
         self.gtaskid = [x['#text'] for x in plist if x['@name']=='JOBID'][0]
 
     def check_comp(self, comp):
-        if self.workflow=='FBMN-gnps2':
+        if self.workflow in ('FBMN-gnps2', 'EB'):
             nds = self.gnps.component==comp
             pos = self.dbmatch['#Scan#'].isin(self.gnps.loc[nds, 'cluster index'])
         else:

@@ -100,7 +100,7 @@ def apply_gsea(mol_set, params, annotated, feat=None,
 
     # have its own norm param?
     if params['pcoa_norm']:
-        feat[feat.columns[2:]] = feat[feat.columns[2:]].apply(lambda a: a/sum(a))
+        feat[feat.columns[2:]] = feat[feat.columns[2:]].apply(lambda a: a/(sum(a) if sum(a) else 1))
 
     #if params['pcoa_scale']:
     #    df2 = (df2-df2.mean())/df2.std()
@@ -234,7 +234,7 @@ def class_enrichment(chemrich, annotated=None, cfield='ChemRICHClusters',
 
     altrat = []
     for x in clusterdf['name']:
-        alt = sum((chemrich[cfield]==x) & (chemrich['pvalue'] < 0.05))/sum(chemrich[cfield]==x)
+        alt = sum((chemrich[cfield]==x) & (chemrich['pvalue'] < 0.05))/(sum(chemrich[cfield]==x) or 1)
         altrat.append(alt)
 
     uprat = []

@@ -23,10 +23,19 @@ import xmltodict
 import json
 import io
 import re
-import skbio
+#import skbio
 
 from pyclassrich.gnps import Proteosafe
 from pyclassrich.plots import plot_volcano
+
+
+def _safe_ttest(a, b):
+    if np.std(a) == 0 and np.std(b) == 0:
+        return np.nan, 1.0
+    try:
+        return stats.ttest_ind(a, b, equal_var=False)
+    except ZeroDivisionError:
+        return np.nan, 1.0
 
 def multi_class(data, cn, fnames, method):
     if len(data.groupby(cn)) <= 2:
@@ -139,12 +148,17 @@ def univariate(annotation, tabgnps, params,
     feat2.columns = ['sampleid']+fnames
     feat2 = feat2[feat2['sampleid'].str.contains('Peak area')]
     feat2['sampleid'] = feat2['sampleid'].str.replace('(.+)\\.mzX?ML .+', '\\1')
-    mnfeat = feat2[feat2.columns[1:]][feat2[feat2.columns[1:]]!=0].min().min()
+    numcols = feat2[feat2.columns[1:]]
+    nonzeros = numcols[numcols != 0]
+    if nonzeros.empty or nonzeros.min().min() == 0:
+        mnfeat = 1.0
+    else:
+        mnfeat = nonzeros.min().min()
     # Make it optional?
     feat2.replace(0, mnfeat*(2/3), inplace=True)
     if params['normalization']['perform'] and \
        params['normalization']['type']=='TIC':
-        feat2[feat2.columns[1:]] = feat2[feat2.columns[1:]].apply(lambda a: a/sum(a), axis=1)
+        feat2[feat2.columns[1:]] = feat2[feat2.columns[1:]].apply(lambda a: a/(sum(a) if sum(a) else 1), axis=1)
 
     meta['filename'] = meta['filename'].str.replace("\\.mzXML|\\.mzML", "")
     # should transformations be applied?
@@ -172,8 +186,7 @@ def univariate(annotation, tabgnps, params,
         cn = params['comparison']['field']
         idx0 = feat2.index[np.where(feat2[cn]==cs[0])]
         idx1 = feat2.index[np.where(feat2[cn]==cs[1])]
-        ttest = feat2[fnames].apply(lambda a: stats.ttest_ind(a[idx0], a[idx1],
-        equal_var = False)).T
+        ttest = feat2[fnames].apply(lambda a: _safe_ttest(a[idx0], a[idx1])).T
         ttest.columns = ['statistic', 'pvalue']
         pvals = ttest['pvalue']
         pcor = multipletests(pvals, method='fdr_bh')[1]
@@ -221,7 +234,8 @@ def univariate(annotation, tabgnps, params,
         idx0 = feat2.index[np.where(feat2[cn]==cs[0])]
         idx1 = feat2.index[np.where(feat2[cn]==cs[1])]
         fchange = feat2[fnames].apply(lambda a:
-                                      np.mean(a[idx0])/np.mean(a[idx1]))
+                                      np.mean(a[idx0])/np.mean(a[idx1]) if np.mean(a[idx1]) else 1)
+        fchange = fchange.replace([np.inf, -np.inf], 1.0).fillna(1.0)
         if volcano:
             vdf = pd.DataFrame([np.log2(fchange.tolist()),
                                 -np.log10(pvals.tolist()),
@@ -249,9 +263,10 @@ def univariate(annotation, tabgnps, params,
         for fch in range(len(cs)):
             idx0 = feat2.index[np.where(feat2[cn]==cs[fch])]
             fchlist.append(feat2[fnames].apply(lambda a:
-                                          np.mean(a[idx0])/np.mean(a))
-                          )
+                                           np.mean(a[idx0])/np.mean(a) if np.mean(a) else 1)
+                           )
         fchange = pd.concat(fchlist, axis=1)
+        fchange = fchange.replace([np.inf, -np.inf], 1.0).fillna(1.0)
         fchange.columns = [c+'_foldchange' for c in cs]
 
         mxfchange = fchange.apply(lambda a: a[np.where(abs(np.log2(a))==np.amax(abs(np.log2(a))))[0][0]], axis=1)
@@ -362,10 +377,10 @@ def plot_emperor(nap_taskid, metric,
         df2 = df2[df2.columns[df2.apply(lambda a: sum(a)!=0).tolist()]]
     feat = Artifact.import_data("FeatureTable[Frequency]", df2)
     if params['pcoa_norm']:
-        df2 = df2.apply(lambda a: a/sum(a), axis=1)
+        df2 = df2.apply(lambda a: a/(sum(a) if sum(a) else 1), axis=1)
 
     if params['pcoa_scale']:
-        df2 = (df2-df2.mean())/df2.std()
+        df2 = df2.apply(lambda a: (a-a.mean())/(a.std() if a.std() else 1), axis=0)
 
     dm1 = squareform(pdist(df2, metric=metric))
     dm1 = skbio.DistanceMatrix(dm1, ids=df2.index.tolist())
