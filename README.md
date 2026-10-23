@@ -1,10 +1,10 @@
 # pyClassRich 
 
 <p align="center">
-  <img src="https://github.com/computational-chemical-biology/pyClassRich/blob/master/img/" alt="logo"/>
+  <img src="https://github.com/computational-chemical-biology/pyClassRich/blob/master/img/pyclassrich.jpeg" alt="logo"/>
 </p>
 
-pyClassRich uses class annotation on LC-MS experiments to perform enrichment analysis, generating ontology weighted graphs and [GSEA](https://github.com/ostrokach/gseapy) results.
+pyClassRich uses class annotation on LC-MS experiments to perform enrichment analysis, generating ontology weighted graphs and impact plots.
 
 ### Install conda
 
